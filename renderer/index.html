@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'" />
+<title>TLINE</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header id="app-header">
+    <h1>TLINE</h1>
+    <nav id="tabs">
+      <button class="tab-button active" data-tab="plan">計画</button>
+      <button class="tab-button" data-tab="dispatch">運転整理</button>
+      <button class="tab-button" data-tab="actual">実績</button>
+    </nav>
+  </header>
+
+  <main>
+    <section id="tab-plan" class="tab-panel active">
+      <h2>計画（ダイヤ）</h2>
+      <p class="panel-note">サンプルダイヤ（data/sampleDiagram.mjs）を表示しています。ファイルの読み込み・保存は未実装です。</p>
+      <div id="plan-diagram" class="diagram-container"></div>
+      <table id="plan-table" class="stop-table"></table>
+    </section>
+
+    <section id="tab-dispatch" class="tab-panel">
+      <h2>運転整理</h2>
+      <p class="panel-note">列車を選び、ある駅から先の時刻をまとめてn秒ずらします（他列車との競合チェックは未実装）。</p>
+      <form id="dispatch-form" class="dispatch-form">
+        <label>
+          列車
+          <select id="dispatch-train"></select>
+        </label>
+        <label>
+          ずらす起点駅
+          <select id="dispatch-station"></select>
+        </label>
+        <label>
+          ずらす秒数（正=遅らせる／負=早める）
+          <input id="dispatch-delta" type="number" step="1" value="90" />
+        </label>
+        <button type="submit">適用</button>
+        <button type="button" id="dispatch-reset">リセット</button>
+      </form>
+      <div id="dispatch-diagram" class="diagram-container"></div>
+      <table id="dispatch-table" class="stop-table"></table>
+    </section>
+
+    <section id="tab-actual" class="tab-panel">
+      <h2>実績</h2>
+      <p class="panel-note">計画時刻に対する実際の着発時刻を入力すると、差分（秒）を計算します。入力内容は保存されません（未実装）。</p>
+      <table id="actual-table" class="stop-table"></table>
+    </section>
+  </main>
+
+  <script type="module" src="app.mjs"></script>
+</body>
+</html>
