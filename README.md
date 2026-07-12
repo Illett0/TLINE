@@ -22,7 +22,9 @@ OuDia/OuDiaSecondのUI・機能コンセプトを参考にした、**運転整�
 ## 現状
 
 - Electron製、素のHTML/CSS/JS（PathBrowserと同じ構成方針）。
-- ローカルのサンプルデータ（`data/sampleDiagram.mjs`）を読み込んで3タブとも動作する状態（`scripts/screenshot.js`で実際の画面表示を確認済み。NOTES.md参照）。ファイルの読み込み・保存、`.oud`/`.oud2`インポート、列車同士の競合（行き違い・追い越し）チェックは未実装。
+- 独自形式（`.tline.json`）でのファイルの開く・保存・名前を付けて保存・最近使ったファイルの再オープンに対応（`scripts/screenshot.js`で実際の画面表示・保存/読み込みの往復を確認済み。NOTES.md参照）。起動直後はサンプルデータ（`data/sampleDiagram.mjs`）を表示。
+- `.oud`/`.oud2`インポートは未対応。ドット階層構造・駅一覧・列車番号/方向の抽出はクリーンルーム実装済み（`lib/oudParser.js`）だが、時刻本体(`EkiJikoku`)のエンコードが未解読のため画面には未接続（NOTES.md参照）。
+- 列車同士の競合（行き違い・追い越し）チェックは未実装。
 - `Diagram/`（`.oud2`実データ、git管理対象外）はTLINEフォルダ直下に配置。詳細はNOTES.md参照。
 - GitHub: [Illett0/TLINE](https://github.com/Illett0/TLINE)。ブランチ運用はPathBrowserと同様dev/main併用、現在はdevブランチのみ。
 
@@ -36,16 +38,18 @@ npm start
 ## プロジェクト構成
 
 ```
-main.js                  Electronメインプロセス（ウィンドウ生成のみ、IPCは未実装）
-preload.js                contextBridge経由の橋渡し（現状は空。将来ファイルI/O用IPCを追加予定）
+main.js                  Electronメインプロセス（ウィンドウ生成・ファイルI/OのIPCハンドラ）
+preload.js                contextBridge経由でwindow.tlineを公開
+lib/recentFiles.js        最近使ったファイルのMRUリスト（userData配下に永続化）
+lib/oudParser.js          .oud/.oud2のクリーンルームパーサ（時刻本体は未対応、NOTES.md参照）
 data/sampleDiagram.mjs    サンプルの計画データ（駅・列車・停車時刻）
-renderer/index.html       3タブの画面
+renderer/index.html       3タブ+ファイルツールバーの画面
 renderer/style.css        スタイル
-renderer/app.mjs          画面遷移・状態管理・イベント配線
+renderer/app.mjs          画面遷移・状態管理・イベント配線・ファイル操作
 renderer/diagramView.mjs  ダイヤグラム（SVG）描画（DOM非依存の純粋関数）
 renderer/dispatch.mjs     運転整理（時刻シフト）ロジック（DOM非依存）
 renderer/timeUtils.mjs    HH:MM:SS ⇔ 秒数の変換ユーティリティ
-scripts/screenshot.js     開発用: Playwrightでアプリを起動し各タブをスクリーンショット保存
+scripts/screenshot.js     開発用: Playwrightでアプリを起動し画面表示・ファイル操作を自動検証
 ```
 
 ## ライセンス
