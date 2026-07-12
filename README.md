@@ -22,7 +22,8 @@ OuDia/OuDiaSecondのUI・機能コンセプトを参考にした、**運転整�
 ## 現状
 
 - Electron製、素のHTML/CSS/JS（PathBrowserと同じ構成方針）。
-- ローカルのサンプルデータ（`data/sampleDiagram.mjs`）を読み込んで3タブとも一応動作する状態。ファイルの読み込み・保存、`.oud`/`.oud2`インポート、列車同士の競合（行き違い・追い越し）チェックは未実装。
+- ローカルのサンプルデータ（`data/sampleDiagram.mjs`）を読み込んで3タブとも動作する状態（`scripts/screenshot.js`で実際の画面表示を確認済み。NOTES.md参照）。ファイルの読み込み・保存、`.oud`/`.oud2`インポート、列車同士の競合（行き違い・追い越し）チェックは未実装。
+- `Diagram/`（`.oud2`実データ、git管理対象外）はTLINEフォルダ直下に配置。詳細はNOTES.md参照。
 - GitHub: [Illett0/TLINE](https://github.com/Illett0/TLINE)。ブランチ運用はPathBrowserと同様dev/main併用、現在はdevブランチのみ。
 
 ## 起動方法
@@ -44,6 +45,7 @@ renderer/app.mjs          画面遷移・状態管理・イベント配線
 renderer/diagramView.mjs  ダイヤグラム（SVG）描画（DOM非依存の純粋関数）
 renderer/dispatch.mjs     運転整理（時刻シフト）ロジック（DOM非依存）
 renderer/timeUtils.mjs    HH:MM:SS ⇔ 秒数の変換ユーティリティ
+scripts/screenshot.js     開発用: Playwrightでアプリを起動し各タブをスクリーンショット保存
 ```
 
 ## ライセンス

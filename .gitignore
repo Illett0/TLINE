@@ -1,6 +1,7 @@
 node_modules/
 dist/
 *.log
+.tmp-screenshots/
 
 # 実データ・サンプル.oud2ファイル置き場。Noout/配下は流出厳禁の実データのため、
 # フォルダ全体をgit管理対象外にする（NOTES.md「サンプルデータの扱い」参照）。

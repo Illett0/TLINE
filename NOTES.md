@@ -124,8 +124,15 @@ PathBrowserで実際に使った手順そのまま。「グラフ描画のため
 5. `git push origin dev && git push origin main && git push origin vX.Y.Z`。
 6. 必要ならビルド成果物を添えて`gh release create vX.Y.Z <asset> --title "TLINE vX.Y.Z" --prerelease --notes "..."`（PathBrowserは`Pre-release`運用で統一されているので、TLINEも安定版が出るまでは同様にprereleaseで良さそう）。
 
-## 動作確認したこと（このセッション）
+## 動作確認したこと
 
 - `renderer/timeUtils.mjs`・`renderer/dispatch.mjs`のロジックをNode上のスクリプトで直接実行し、時刻の相互変換・シフト計算が意図通りであることを確認（境界: 分をまたぐ加減算、指定駅より前は不変、元オブジェクト非破壊）。
 - 全ファイルを`node --check`で構文チェック。
-- `electron .`で起動し、`did-finish-load`イベントが発火することを確認（ページの読み込み自体は成功）。ただし**この環境にはElectronのGUIを実際に目視・操作する手段がなく**、3タブの画面表示や運転整理フォームの挙動を見た目で確認できていません。`document.getElementById`の参照先が`index.html`の`id`と全て一致すること、`.tab-button`/`.tab-panel`のクラス名・`data-tab`値が対応することは目視でクロスチェック済みですが、実際に操作しての確認は次回以降にお願いしたいです。
+- **GUIを実際に目視確認済み**（`scripts/screenshot.js`、下記参照）: 計画タブのダイヤグラム・表、運転整理タブでの時刻シフト適用（オレンジ点線オーバーレイ、B駅以降のみ変化）、実績タブでの実績時刻入力と差分計算（+552秒等）を実際のスクリーンショットで確認。3タブとも想定通り動作。
+
+### GUI確認用スクリプト（`scripts/screenshot.js`）
+
+- PathBrowserにはない、TLINE独自の開発補助ツール。Playwrightの`_electron`ドライバでアプリを実際に起動し、各タブ・操作後の状態をPNGとして`.tmp-screenshots/`（git管理外）に保存する。
+- 経緯: この開発環境にはElectronアプリを直接目視・操作する手段がなかったため、「screenshotを撮ってClaudeが自分でReadツールで見る」という形で解決した。以後、PathBrowserと違いGUIの見た目もセッション内で検証できる。
+- 実行: `npm install`（`playwright`はdevDependencies、`PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1`推奨——Electron自体をブラウザ代わりに操作するのでChromium/Firefox/WebKitのダウンロードは不要）→ `node scripts/screenshot.js`。
+- ファイル読み込み・保存などIPCが増えてきたら、このスクリプトに操作シナリオを追加していく想定（PathBrowserの`PATHBROWSER_TEST_*`環境変数によるダイアログバイパスと役割は近いが、TLINEはこちらでUI操作そのものも自動化する）。
