@@ -3,6 +3,10 @@ dist/
 *.log
 .tmp-screenshots/
 
+# 設計メモ。GitHubで公開する必要はないと判断（2026-07-13）、ローカルのみで運用。
+# 未実装・future workはGitHub Issuesで管理するので、READMEからは参照しない。
+NOTES.md
+
 # 実データ・サンプル.oud2ファイル置き場。Noout/配下は流出厳禁の実データのため、
 # フォルダ全体をgit管理対象外にする（NOTES.md「サンプルデータの扱い」参照）。
 /Diagram/
