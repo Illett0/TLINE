@@ -12,4 +12,7 @@ contextBridge.exposeInMainWorld('tline', {
   saveFile: (filePath, diagram) => ipcRenderer.invoke('diagram:save-file', { filePath, diagram }),
   getRecentFiles: () => ipcRenderer.invoke('diagram:get-recent-files'),
   removeRecentFile: (filePath) => ipcRenderer.invoke('diagram:remove-recent-file', filePath),
+  chooseOpenOudPath: () => ipcRenderer.invoke('oud:choose-open'),
+  listOudDias: (filePath) => ipcRenderer.invoke('oud:list-dias', filePath),
+  importOud: (filePath, diaIndex) => ipcRenderer.invoke('oud:import', { filePath, diaIndex }),
 });

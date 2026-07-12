@@ -22,8 +22,19 @@
       <select id="recent-files-select">
         <option value="">最近使ったファイル…</option>
       </select>
+      <button id="btn-oud-import" type="button">OuDia読み込み…</button>
     </div>
   </header>
+
+  <div id="oud-import-panel" class="oud-import-panel hidden">
+    <span id="oud-import-label"></span>
+    <label>
+      ダイヤ
+      <select id="oud-dia-select"></select>
+    </label>
+    <button id="oud-dia-confirm" type="button">取り込む</button>
+    <button id="oud-dia-cancel" type="button">キャンセル</button>
+  </div>
 
   <main>
     <section id="tab-plan" class="tab-panel active">

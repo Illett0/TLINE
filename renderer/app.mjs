@@ -5,12 +5,14 @@ import { parseTime } from './timeUtils.mjs';
 
 const state = {
   diagram: sampleDiagram, // 計画。ファイルを開くとその内容に差し替わる（state.currentFilePath参照）
-  currentFilePath: null, // null = サンプルデータのまま未保存・未オープン
+  currentFilePath: null, // null = サンプルデータのまま未保存・未オープン、または.oudインポート直後（保存先未確定）
+  currentFileDescription: null, // currentFilePathがnullの間だけ使う表示ラベル（.oudインポート時。「サンプルデータ」と区別するため）
   dispatchTrainId: sampleDiagram.trains[0]?.id ?? null,
   dispatchStationId: sampleDiagram.trains[0]?.stops[0]?.stationId ?? null,
   dispatchDelta: 90,
   adjustedTrain: null, // set once 適用 is pressed; cleared by リセット
   actualByTrainStation: new Map(), // `${trainId}:${stationId}` -> { arrival, departure }
+  pendingOudImport: null, // { filePath, lineName } while the Dia picker is shown; null otherwise
 };
 
 const el = {
@@ -32,6 +34,12 @@ const el = {
   btnFileSave: document.getElementById('btn-file-save'),
   btnFileSaveAs: document.getElementById('btn-file-save-as'),
   recentFilesSelect: document.getElementById('recent-files-select'),
+  btnOudImport: document.getElementById('btn-oud-import'),
+  oudImportPanel: document.getElementById('oud-import-panel'),
+  oudImportLabel: document.getElementById('oud-import-label'),
+  oudDiaSelect: document.getElementById('oud-dia-select'),
+  oudDiaConfirm: document.getElementById('oud-dia-confirm'),
+  oudDiaCancel: document.getElementById('oud-dia-cancel'),
 };
 
 // ---------- Tabs ----------
@@ -187,9 +195,12 @@ function renderActualTab() {
 
 // ---------- ファイル操作（開く・保存・最近使ったファイル） ----------
 //
-// 独自の .tline.json 形式のみ対応（計画データの line/trains をそのまま
-// JSON化したもの）。.oud/.oud2のインポートは時刻エンコード(EkiJikoku)が
-// 未解読のため未対応（NOTES.md参照）。
+// 独自の .tline 形式（計画データの line/trains をそのまま
+// JSON化したもの）の開く・保存に加え、.oud/.oud2（OuDia/OuDiaSecond）
+// からのインポートに対応（lib/oudParser.js、下記「.oud/.oud2インポート」
+// 参照）。インポートしたダイヤは.tlineファイルとして開いたものでは
+// ないため、取り込み後はcurrentFilePathをnull（サンプルデータと同様の
+// 「未保存」扱い）にする——保存するには「名前を付けて保存」が必要。
 
 function isValidDiagram(d) {
   return !!d && !!d.line && Array.isArray(d.line.stations) && Array.isArray(d.trains);
@@ -200,24 +211,33 @@ function basename(filePath) {
 }
 
 function updateFileLabel() {
-  el.currentFileLabel.textContent = state.currentFilePath ? basename(state.currentFilePath) : '（サンプルデータ）';
+  const label = state.currentFilePath ? basename(state.currentFilePath) : state.currentFileDescription || '（サンプルデータ）';
+  el.currentFileLabel.textContent = label;
   el.currentFileLabel.title = state.currentFilePath || '';
   el.btnFileSave.disabled = !state.currentFilePath;
-  el.planNote.textContent = state.currentFilePath
-    ? `${state.currentFilePath} を表示しています。`
-    : 'サンプルダイヤ（data/sampleDiagram.mjs）を表示しています。';
+  if (state.currentFilePath) {
+    el.planNote.textContent = `${state.currentFilePath} を表示しています。`;
+  } else if (state.currentFileDescription) {
+    el.planNote.textContent = `${state.currentFileDescription} を表示しています（保存するには「名前を付けて保存」）。`;
+  } else {
+    el.planNote.textContent = 'サンプルダイヤ（data/sampleDiagram.mjs）を表示しています。';
+  }
 }
 
-// 開いたファイル・新規保存後、いずれもここを通って画面全体を更新する。
-// 運転整理・実績のその場限りの作業状態（adjustedTrain/actualByTrainStation）
-// は新しいダイヤに対しては意味を持たないためリセットする。
-function loadDiagram(diagram, filePath) {
+// 開いたファイル・新規保存後・.oudインポート後、いずれもここを通って画面
+// 全体を更新する。運転整理・実績のその場限りの作業状態
+// （adjustedTrain/actualByTrainStation）は新しいダイヤに対しては意味を
+// 持たないためリセットする。
+// `description` は.oudインポートなどcurrentFilePathを持たない取り込みで、
+// 「サンプルデータ」表示と区別するためのラベル（例:「碧洛電車.oud2 / 通常」）。
+function loadDiagram(diagram, filePath, description) {
   if (!isValidDiagram(diagram)) {
     window.alert('ダイヤファイルの形式が正しくありません（line.stations / trains が必要です）。');
     return;
   }
   state.diagram = diagram;
   state.currentFilePath = filePath || null;
+  state.currentFileDescription = filePath ? null : description || null;
   state.dispatchTrainId = diagram.trains[0]?.id ?? null;
   state.dispatchStationId = diagram.trains[0]?.stops?.[0]?.stationId ?? null;
   state.adjustedTrain = null;
@@ -255,7 +275,7 @@ el.btnFileSave.addEventListener('click', async () => {
 });
 
 el.btnFileSaveAs.addEventListener('click', async () => {
-  const defaultName = state.currentFilePath ? basename(state.currentFilePath) : 'diagram.tline.json';
+  const defaultName = state.currentFilePath ? basename(state.currentFilePath) : 'diagram.tline';
   const filePath = await window.tline.chooseSavePath(defaultName);
   if (!filePath) return;
   await window.tline.saveFile(filePath, state.diagram);
@@ -276,6 +296,57 @@ el.recentFilesSelect.addEventListener('change', async () => {
   }
   await refreshRecentFiles();
   el.recentFilesSelect.value = '';
+});
+
+// ---------- .oud/.oud2インポート ----------
+//
+// 2段階フロー: ファイルを選ぶ→Dia一覧を取得（複数持つファイルが普通、
+// NOTES.md参照）→ユーザーがDiaを選んで「取り込む」でTLINEのデータモデルに
+// 変換して読み込む。取り込み後、未確定（timesConfident:false）の列車が
+// あれば件数を知らせる（見た目上の区別はissue #1の今後の課題）。
+
+function hideOudImportPanel() {
+  state.pendingOudImport = null;
+  el.oudImportPanel.classList.add('hidden');
+  el.oudDiaSelect.innerHTML = '';
+}
+
+el.btnOudImport.addEventListener('click', async () => {
+  const filePath = await window.tline.chooseOpenOudPath();
+  if (!filePath) return;
+  try {
+    const { lineName, dias } = await window.tline.listOudDias(filePath);
+    if (dias.length === 0) {
+      window.alert('このファイルにはダイヤ（Dia）が見つかりませんでした。');
+      return;
+    }
+    state.pendingOudImport = { filePath, lineName };
+    el.oudImportLabel.textContent = `${basename(filePath)}（${lineName || '路線名なし'}）`;
+    el.oudDiaSelect.innerHTML = dias.map((d) => `<option value="${d.index}">${d.name}（${d.trainCount}本）</option>`).join('');
+    el.oudImportPanel.classList.remove('hidden');
+  } catch (err) {
+    window.alert(`OuDiaファイルを読み込めませんでした: ${err && err.message ? err.message : err}`);
+  }
+});
+
+el.oudDiaConfirm.addEventListener('click', async () => {
+  if (!state.pendingOudImport) return;
+  const diaIndex = Number(el.oudDiaSelect.value);
+  try {
+    const { diagram, stats } = await window.tline.importOud(state.pendingOudImport.filePath, diaIndex);
+    loadDiagram(diagram, null, `${basename(state.pendingOudImport.filePath)} / ${stats.diaName}`);
+    hideOudImportPanel();
+    const notes = [];
+    if (stats.skippedTrains > 0) notes.push(`時刻データのない${stats.skippedTrains}本は除外`);
+    if (stats.unconfidentTrains > 0) notes.push(`${stats.unconfidentTrains}本は時刻の解読精度が低い可能性あり`);
+    window.alert(`「${stats.diaName}」から${stats.importedTrains}本の列車を取り込みました。${notes.length ? '（' + notes.join('、') + '）' : ''}`);
+  } catch (err) {
+    window.alert(`ダイヤを取り込めませんでした: ${err && err.message ? err.message : err}`);
+  }
+});
+
+el.oudDiaCancel.addEventListener('click', () => {
+  hideOudImportPanel();
 });
 
 // ---------- Init ----------

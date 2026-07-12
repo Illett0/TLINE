@@ -49,6 +49,30 @@ body {
 }
 #file-toolbar button:disabled { color: var(--color-text-dim); cursor: not-allowed; opacity: 0.5; }
 #file-toolbar button:not(:disabled):hover { background: rgba(255, 255, 255, 0.06); }
+.hidden { display: none !important; }
+
+#oud-import-panel {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 20px;
+  background: var(--color-panel);
+  border-bottom: 1px solid var(--color-border);
+  font-size: 12px;
+}
+#oud-import-panel label { display: flex; align-items: center; gap: 6px; color: var(--color-text-dim); }
+#oud-import-panel select,
+#oud-import-panel button {
+  background: transparent;
+  border: 1px solid var(--color-border);
+  color: var(--color-text);
+  padding: 5px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+}
+#oud-import-label { color: var(--color-text-dim); }
+
 .tab-button {
   background: transparent;
   border: none;

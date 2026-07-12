@@ -22,8 +22,8 @@ OuDia/OuDiaSecondのUI・機能コンセプトを参考にした、**運転整�
 ## 現状
 
 - Electron製、素のHTML/CSS/JS（PathBrowserと同じ構成方針）。
-- 独自形式（`.tline.json`）でのファイルの開く・保存・名前を付けて保存・最近使ったファイルの再オープンに対応（`scripts/screenshot.js`で実際の画面表示・保存/読み込みの往復を確認済み）。起動直後はサンプルデータ（`data/sampleDiagram.mjs`）を表示。
-- `.oud`/`.oud2`インポートは未対応（画面には未接続）。ドット階層構造・駅一覧・列車番号/方向・時刻本体(`EkiJikoku`)の大筋デコードはクリーンルーム実装済み（`lib/oudParser.js`）。残課題は[issue #1](https://github.com/Illett0/TLINE/issues/1)。
+- 独自形式（`.tline`、中身はJSON）でのファイルの開く・保存・名前を付けて保存・最近使ったファイルの再オープンに対応（`scripts/screenshot.js`で実際の画面表示・保存/読み込みの往復を確認済み）。起動直後はサンプルデータ（`data/sampleDiagram.mjs`）を表示。
+- `.oud`/`.oud2`インポートに対応。ファイルツールバーの「OuDia読み込み…」から、ファイルを選ぶ→取り込むDia（1ファイルに複数のダイヤパターンを持てる）を選ぶ→計画データとして取り込む、の2段階フロー。ドット階層構造・駅一覧・列車番号/方向・時刻本体(`EkiJikoku`)のデコードはクリーンルーム実装（`lib/oudParser.js`）。残課題（駅扱いコード/番線の厳密な意味、エクスポート等）は[issue #1](https://github.com/Illett0/TLINE/issues/1)。
 - 列車同士の競合（行き違い・追い越し）チェックは未実装（[issue #4](https://github.com/Illett0/TLINE/issues/4)）。
 - `Diagram/`（`.oud2`実データ、git管理対象外）はTLINEフォルダ直下に配置。
 - GitHub: [Illett0/TLINE](https://github.com/Illett0/TLINE)。ブランチ運用はPathBrowserと同様dev/main併用、現在はdevブランチのみ。
@@ -41,7 +41,7 @@ npm start
 main.js                  Electronメインプロセス（ウィンドウ生成・ファイルI/OのIPCハンドラ）
 preload.js                contextBridge経由でwindow.tlineを公開
 lib/recentFiles.js        最近使ったファイルのMRUリスト（userData配下に永続化）
-lib/oudParser.js          .oud/.oud2のクリーンルームパーサ（時刻本体は大筋対応、画面には未接続。issue #1参照）
+lib/oudParser.js          .oud/.oud2のクリーンルームパーサ・TLINEデータモデルへの変換（画面接続済み。issue #1参照）
 data/sampleDiagram.mjs    サンプルの計画データ（駅・列車・停車時刻）
 renderer/index.html       3タブ+ファイルツールバーの画面
 renderer/style.css        スタイル

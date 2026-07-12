@@ -13,8 +13,8 @@ const fs = require('fs');
 const { _electron: electron } = require('playwright');
 
 const OUT_DIR = path.join(__dirname, '..', '.tmp-screenshots');
-const SAVE_PATH = path.join(OUT_DIR, 'saved-by-test.tline.json');
-const OPEN_FIXTURE_PATH = path.join(OUT_DIR, 'open-fixture.tline.json');
+const SAVE_PATH = path.join(OUT_DIR, 'saved-by-test.tline');
+const OPEN_FIXTURE_PATH = path.join(OUT_DIR, 'open-fixture.tline');
 
 const OPEN_FIXTURE = {
   line: { name: 'テスト線', stations: [{ id: 'X', name: 'X駅', distanceKm: 0 }, { id: 'Y', name: 'Y駅', distanceKm: 3 }] },
@@ -75,7 +75,7 @@ async function main() {
   const recentOptions = await window.locator('#recent-files-select option').allTextContents();
 
   console.log('savedOk:', savedOk, 'saveRoundTripOk:', saveRoundTripOk);
-  console.log('labelAfterOpen (expect open-fixture.tline.json):', labelAfterOpen);
+  console.log('labelAfterOpen (expect open-fixture.tline):', labelAfterOpen);
   console.log('recentOptions:', recentOptions);
 
   await app.close();
