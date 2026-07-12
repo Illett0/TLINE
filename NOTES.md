@@ -66,10 +66,63 @@
 - 実績データの入力方法（手入力のみか、外部の運行実績データ形式に対応するか）。
 - 複数路線・支線・分岐への対応（v1は単一路線・単純な駅リストのみ）。
 
+## サンプルデータ（`.oud2`）の扱い
+
+- 実データは`TLINE`フォルダの外、`C:\Users\hayap\OneDrive - Univ\Claude\Diagram\`に置かれている（`TLINE`リポジトリには含めない。`Diagram`フォルダ全体がgit管理対象外という指示）。
+- `Diagram/Noout/`配下（`館浜運転会*.oud2`）は**実データ・流出厳禁**。Claudeが読む＝Anthropic側にファイル内容が送信されることを意味するため、内容を精査する必要がある限りは**読まない**方針とする（本セッションでも読んでいない）。パーサの単体テスト等でどうしても実データでの検証が必要になったら、その時点でユーザー本人に「読んでよいか」を明示的に再確認する。
+- `Diagram/`直下の`高根鉄道*.oud2`（Noout以外）は参考・実装用に読んでよいデータとして提供された。実際に`高根鉄道28分パターンby Vague.oud2`を読み、フォーマットの実物を確認済み（下記）。
+
+### `.oud2`フォーマット構造メモ（実ファイルから確認、UTF-8 BOM・CRLF）
+
+```
+FileType=OuDiaSecond.1.11
+Rosen.
+  Rosenmei=
+  Eki.
+    Ekimei=高岡              # 駅名
+    EkimeiJikokuRyaku=高岡   # 時刻表略称
+    Ekijikokukeisiki=Jikokukeisiki_NoboriChaku  # 上り着/下り発 等の表示形式
+    Ekikibo=Ekikibo_Syuyou   # 駅規模（主要/一般 等）
+    EkiTrack2Cont.
+      EkiTrack2.
+        TrackName=5番線
+        TrackRyakusyou=5
+      .                      # ← 各ブロックは "." 単体行で閉じる（ドット階層）
+    .
+    NextEkiDistance=90       # 次駅までの距離（表示上のdiagram距離、実キロ程ではなさそう）
+    ...
+  .
+  Dia.
+    DiaName=本線3編成
+    Ressya.
+      Houkou=Kudari          # Kudari(下り) / Nobori(上り)
+      Ressyabangou=A1001     # 列車番号
+      EkiJikoku=,,2;204350$0,2$1,2$0,1;204730/$1   # ← 独自の圧縮エンコード（下記）
+    .
+```
+
+`EkiJikoku`の圧縮エンコードはまだ完全には解読できていない。観察できたこと:
+- `$`区切りで駅ごとのフィールドが並ぶ（駅の並び順は`Rosen.`内の`Eki.`の登場順に対応するはず）。
+- `;`の右側が時刻。6桁は`HHMMSS`（例: `204350`=20:43:50）、`/`区切りで着/発（例: `204730/210040`のような着→発、末尾に片方しかない場合もある）。
+- `;`の左側・`,`区切りの数値列はおそらく着発番線（トラック）インデックスやフラグ（通過/停車種別など）。まだ意味を確定できていない。
+- 何も時刻がない駅（通過扱い？）は空フィールド（`,,`のように連続カンマ）になっている様子。
+- 次回、`高根鉄道*.oud2`の複数ファイルを突き合わせて`EkiJikoku`のエンコード規則を確定させ、`lib/oudParser.js`（仮）としてクリーンルーム実装する。マニュアル（take-okm氏サイトの`c02_datafile`等）も合わせて参照する。
+
 ## プロジェクト名・GitHub（確定）
 
 - 名称は**TLINE**（トライン）。Train + Line（＝「スジ」）の言葉遊び。旧仮称"SujiOps"から改称、フォルダ名・`package.json`の`name`・`renderer/index.html`のタイトルを一括変更済み。
-- GitHub: [Illett0/TLINE](https://github.com/Illett0/TLINE)（作成済み、当初は空リポジトリ）。ブランチ運用はPathBrowserと同様dev/main併用。現時点ではdevブランチのみ作成・push、mainは未作成（将来リリース時にdev→mainマージの運用を踏襲）。
+- GitHub: [Illett0/TLINE](https://github.com/Illett0/TLINE)（作成済み、当初は空リポジトリ）。ブランチ運用はPathBrowserと同様dev/main併用。現時点ではdevブランチのみ作成・push、mainは未作成。
+
+### リリース時の手順（PathBrowserと統一、次回dev→mainマージ時に必ずこの通りにやる）
+
+PathBrowserで実際に使った手順そのまま。「グラフ描画のための手法」＝`git log --graph`やGitHubのネットワークグラフでdev→mainのマージ構造が見えるように、**必ず`--no-ff`でマージする**（fast-forwardさせない）のがポイント。
+
+1. `dev`でバージョン番号を上げるコミット（`package.json`/`package-lock.json`のみ）。コミットメッセージは`vX.Y.Z: バージョン更新`＋変更点の要約。
+2. `git checkout main && git merge --no-ff dev -m "Merge branch 'dev'"`（fast-forwardしない＝マージコミットを必ず作る）。
+3. `git tag vX.Y.Z`（mainのマージコミットに対して）。
+4. `git checkout dev`に戻る（devが普段の作業ブランチ）。
+5. `git push origin dev && git push origin main && git push origin vX.Y.Z`。
+6. 必要ならビルド成果物を添えて`gh release create vX.Y.Z <asset> --title "TLINE vX.Y.Z" --prerelease --notes "..."`（PathBrowserは`Pre-release`運用で統一されているので、TLINEも安定版が出るまでは同様にprereleaseで良さそう）。
 
 ## 動作確認したこと（このセッション）
 
