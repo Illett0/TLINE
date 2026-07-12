@@ -14,12 +14,21 @@
       <button class="tab-button" data-tab="dispatch">運転整理</button>
       <button class="tab-button" data-tab="actual">実績</button>
     </nav>
+    <div id="file-toolbar">
+      <span id="current-file-label">（サンプルデータ）</span>
+      <button id="btn-file-open" type="button">開く</button>
+      <button id="btn-file-save" type="button" disabled>保存</button>
+      <button id="btn-file-save-as" type="button">名前を付けて保存</button>
+      <select id="recent-files-select">
+        <option value="">最近使ったファイル…</option>
+      </select>
+    </div>
   </header>
 
   <main>
     <section id="tab-plan" class="tab-panel active">
       <h2>計画（ダイヤ）</h2>
-      <p class="panel-note">サンプルダイヤ（data/sampleDiagram.mjs）を表示しています。ファイルの読み込み・保存は未実装です。</p>
+      <p class="panel-note" id="plan-note">サンプルダイヤ（data/sampleDiagram.mjs）を表示しています。</p>
       <div id="plan-diagram" class="diagram-container"></div>
       <table id="plan-table" class="stop-table"></table>
     </section>

@@ -4,7 +4,8 @@ import { applyDelay } from './dispatch.mjs';
 import { parseTime } from './timeUtils.mjs';
 
 const state = {
-  diagram: sampleDiagram, // 計画 — static for now; load/save isn't implemented yet (see NOTES.md)
+  diagram: sampleDiagram, // 計画。ファイルを開くとその内容に差し替わる（state.currentFilePath参照）
+  currentFilePath: null, // null = サンプルデータのまま未保存・未オープン
   dispatchTrainId: sampleDiagram.trains[0]?.id ?? null,
   dispatchStationId: sampleDiagram.trains[0]?.stops[0]?.stationId ?? null,
   dispatchDelta: 90,
@@ -17,6 +18,7 @@ const el = {
   tabPanels: document.querySelectorAll('.tab-panel'),
   planDiagram: document.getElementById('plan-diagram'),
   planTable: document.getElementById('plan-table'),
+  planNote: document.getElementById('plan-note'),
   dispatchForm: document.getElementById('dispatch-form'),
   dispatchTrain: document.getElementById('dispatch-train'),
   dispatchStation: document.getElementById('dispatch-station'),
@@ -25,6 +27,11 @@ const el = {
   dispatchDiagram: document.getElementById('dispatch-diagram'),
   dispatchTable: document.getElementById('dispatch-table'),
   actualTable: document.getElementById('actual-table'),
+  currentFileLabel: document.getElementById('current-file-label'),
+  btnFileOpen: document.getElementById('btn-file-open'),
+  btnFileSave: document.getElementById('btn-file-save'),
+  btnFileSaveAs: document.getElementById('btn-file-save-as'),
+  recentFilesSelect: document.getElementById('recent-files-select'),
 };
 
 // ---------- Tabs ----------
@@ -178,9 +185,104 @@ function renderActualTab() {
   });
 }
 
+// ---------- ファイル操作（開く・保存・最近使ったファイル） ----------
+//
+// 独自の .tline.json 形式のみ対応（計画データの line/trains をそのまま
+// JSON化したもの）。.oud/.oud2のインポートは時刻エンコード(EkiJikoku)が
+// 未解読のため未対応（NOTES.md参照）。
+
+function isValidDiagram(d) {
+  return !!d && !!d.line && Array.isArray(d.line.stations) && Array.isArray(d.trains);
+}
+
+function basename(filePath) {
+  return filePath.split(/[\\/]/).pop();
+}
+
+function updateFileLabel() {
+  el.currentFileLabel.textContent = state.currentFilePath ? basename(state.currentFilePath) : '（サンプルデータ）';
+  el.currentFileLabel.title = state.currentFilePath || '';
+  el.btnFileSave.disabled = !state.currentFilePath;
+  el.planNote.textContent = state.currentFilePath
+    ? `${state.currentFilePath} を表示しています。`
+    : 'サンプルダイヤ（data/sampleDiagram.mjs）を表示しています。';
+}
+
+// 開いたファイル・新規保存後、いずれもここを通って画面全体を更新する。
+// 運転整理・実績のその場限りの作業状態（adjustedTrain/actualByTrainStation）
+// は新しいダイヤに対しては意味を持たないためリセットする。
+function loadDiagram(diagram, filePath) {
+  if (!isValidDiagram(diagram)) {
+    window.alert('ダイヤファイルの形式が正しくありません（line.stations / trains が必要です）。');
+    return;
+  }
+  state.diagram = diagram;
+  state.currentFilePath = filePath || null;
+  state.dispatchTrainId = diagram.trains[0]?.id ?? null;
+  state.dispatchStationId = diagram.trains[0]?.stops?.[0]?.stationId ?? null;
+  state.adjustedTrain = null;
+  state.actualByTrainStation = new Map();
+
+  updateFileLabel();
+  renderPlanTab();
+  populateDispatchSelectors();
+  renderDispatchTab();
+  renderActualTab();
+}
+
+async function refreshRecentFiles() {
+  const list = await window.tline.getRecentFiles();
+  el.recentFilesSelect.innerHTML =
+    '<option value="">最近使ったファイル…</option>' + list.map((e) => `<option value="${e.path}">${e.name}</option>`).join('');
+}
+
+el.btnFileOpen.addEventListener('click', async () => {
+  const filePath = await window.tline.chooseOpenPath();
+  if (!filePath) return;
+  try {
+    const { diagram } = await window.tline.openFile(filePath);
+    loadDiagram(diagram, filePath);
+    await refreshRecentFiles();
+  } catch (err) {
+    window.alert(`ファイルを開けませんでした: ${err && err.message ? err.message : err}`);
+  }
+});
+
+el.btnFileSave.addEventListener('click', async () => {
+  if (!state.currentFilePath) return;
+  await window.tline.saveFile(state.currentFilePath, state.diagram);
+  await refreshRecentFiles();
+});
+
+el.btnFileSaveAs.addEventListener('click', async () => {
+  const defaultName = state.currentFilePath ? basename(state.currentFilePath) : 'diagram.tline.json';
+  const filePath = await window.tline.chooseSavePath(defaultName);
+  if (!filePath) return;
+  await window.tline.saveFile(filePath, state.diagram);
+  state.currentFilePath = filePath;
+  updateFileLabel();
+  await refreshRecentFiles();
+});
+
+el.recentFilesSelect.addEventListener('change', async () => {
+  const filePath = el.recentFilesSelect.value;
+  if (!filePath) return;
+  try {
+    const { diagram } = await window.tline.openFile(filePath);
+    loadDiagram(diagram, filePath);
+  } catch (err) {
+    window.alert(`ファイルを開けませんでした: ${err && err.message ? err.message : err}`);
+    await window.tline.removeRecentFile(filePath);
+  }
+  await refreshRecentFiles();
+  el.recentFilesSelect.value = '';
+});
+
 // ---------- Init ----------
 
+updateFileLabel();
 renderPlanTab();
 populateDispatchSelectors();
 renderDispatchTab();
 renderActualTab();
+refreshRecentFiles();
