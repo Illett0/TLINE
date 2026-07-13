@@ -259,7 +259,7 @@ function loadDiagram(diagram, filePath, description) {
     window.alert('ダイヤファイルの形式が正しくありません（line.stations / trains が必要です）。');
     return;
   }
-  state.diagram = diagram;
+  state.diagram = { line: diagram.line, trains: diagram.trains }; // dispatch/actualはrestoreOpsExtrasが別途扱う（state.diagramには含めない）
   state.currentFilePath = filePath || null;
   state.currentFileDescription = filePath ? null : description || null;
   state.dispatchTrainId = diagram.trains[0]?.id ?? null;
@@ -275,6 +275,46 @@ function loadDiagram(diagram, filePath, description) {
   renderActualTab();
 }
 
+// 運転整理・実績の保存形式（issue #3、確定）: 計画(line/trains)と同じ.tline
+// ファイル内に、任意の`dispatch`/`actual`セクションを追加する（別拡張子・別
+// ファイルにはしない）。どちらのキーもない旧来のplanのみ.tlineファイルも
+// そのまま開ける後方互換を維持する。
+// - dispatch: 運転整理タブの最後の適用状態（v1同様、保持できるのは1列車分のみ）
+//   { trainId, fromStationId, deltaSeconds }
+// - actual: 実績タブの入力値。MapはJSON化できないのでObjectにして保存し、
+//   読み込み時にMapへ戻す。 { "trainId:stationId": { arrival, departure } }
+function buildSavePayload() {
+  const payload = { line: state.diagram.line, trains: state.diagram.trains };
+  if (state.adjustedTrain) {
+    payload.dispatch = { trainId: state.dispatchTrainId, fromStationId: state.dispatchStationId, deltaSeconds: state.dispatchDelta };
+  }
+  if (state.actualByTrainStation.size > 0) {
+    payload.actual = Object.fromEntries(state.actualByTrainStation);
+  }
+  return payload;
+}
+
+// loadDiagram()がplan(line/trains)を読み込んだ直後に呼ぶ。dispatch/actualは
+// state.diagramに含めない別セクションなので、loadDiagramのリセット処理の
+// あとに改めて復元する。
+function restoreOpsExtras(loaded) {
+  if (loaded.dispatch) {
+    const train = state.diagram.trains.find((t) => t.id === loaded.dispatch.trainId);
+    if (train) {
+      state.dispatchTrainId = loaded.dispatch.trainId;
+      state.dispatchStationId = loaded.dispatch.fromStationId;
+      state.dispatchDelta = loaded.dispatch.deltaSeconds;
+      state.adjustedTrain = applyDelay(train, loaded.dispatch.fromStationId, loaded.dispatch.deltaSeconds);
+      populateDispatchSelectors();
+      renderDispatchTab();
+    }
+  }
+  if (loaded.actual) {
+    state.actualByTrainStation = new Map(Object.entries(loaded.actual));
+  }
+  renderActualTab();
+}
+
 async function refreshRecentFiles() {
   const list = await window.tline.getRecentFiles();
   el.recentFilesSelect.innerHTML =
@@ -287,6 +327,7 @@ el.btnFileOpen.addEventListener('click', async () => {
   try {
     const { diagram } = await window.tline.openFile(filePath);
     loadDiagram(diagram, filePath);
+    restoreOpsExtras(diagram);
     await refreshRecentFiles();
   } catch (err) {
     window.alert(`ファイルを開けませんでした: ${err && err.message ? err.message : err}`);
@@ -295,7 +336,7 @@ el.btnFileOpen.addEventListener('click', async () => {
 
 el.btnFileSave.addEventListener('click', async () => {
   if (!state.currentFilePath) return;
-  await window.tline.saveFile(state.currentFilePath, state.diagram);
+  await window.tline.saveFile(state.currentFilePath, buildSavePayload());
   await refreshRecentFiles();
 });
 
@@ -303,7 +344,7 @@ el.btnFileSaveAs.addEventListener('click', async () => {
   const defaultName = state.currentFilePath ? basename(state.currentFilePath) : 'diagram.tline';
   const filePath = await window.tline.chooseSavePath(defaultName);
   if (!filePath) return;
-  await window.tline.saveFile(filePath, state.diagram);
+  await window.tline.saveFile(filePath, buildSavePayload());
   state.currentFilePath = filePath;
   updateFileLabel();
   await refreshRecentFiles();
@@ -315,6 +356,7 @@ el.recentFilesSelect.addEventListener('change', async () => {
   try {
     const { diagram } = await window.tline.openFile(filePath);
     loadDiagram(diagram, filePath);
+    restoreOpsExtras(diagram);
   } catch (err) {
     window.alert(`ファイルを開けませんでした: ${err && err.message ? err.message : err}`);
     await window.tline.removeRecentFile(filePath);
