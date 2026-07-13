@@ -14,6 +14,7 @@ const state = {
   actualByTrainStation: new Map(), // `${trainId}:${stationId}` -> { arrival, departure }
   actualCompareTarget: 'plan', // 'plan' | 'dispatch' — 実績タブで何と差分を取るか（issue #7）
   pendingOudImport: null, // { filePath, lineName } while the Dia picker is shown; null otherwise
+  diagramZoom: 1, // 計画・運転整理タブ共通のダイヤグラム拡大率（issue #8）
 };
 
 const el = {
@@ -29,6 +30,10 @@ const el = {
   dispatchReset: document.getElementById('dispatch-reset'),
   dispatchDiagram: document.getElementById('dispatch-diagram'),
   dispatchTable: document.getElementById('dispatch-table'),
+  planZoom: document.getElementById('plan-zoom'),
+  planZoomLabel: document.getElementById('plan-zoom-label'),
+  dispatchZoom: document.getElementById('dispatch-zoom'),
+  dispatchZoomLabel: document.getElementById('dispatch-zoom-label'),
   actualTable: document.getElementById('actual-table'),
   actualCompareTarget: document.getElementById('actual-compare-target'),
   actualCompareNote: document.getElementById('actual-compare-note'),
@@ -77,9 +82,29 @@ function stopTableHtml(diagram, { trainOverride } = {}) {
 }
 
 function renderPlanTab() {
-  renderDiagram(el.planDiagram, { stations: state.diagram.line.stations, trains: state.diagram.trains });
+  renderDiagram(el.planDiagram, { stations: state.diagram.line.stations, trains: state.diagram.trains }, { zoom: state.diagramZoom });
   el.planTable.innerHTML = stopTableHtml(state.diagram);
 }
+
+// ---------- ダイヤグラムの拡大率（計画・運転整理タブ共通、issue #8） ----------
+
+function updateZoomControls() {
+  const label = `${Math.round(state.diagramZoom * 100)}%`;
+  el.planZoom.value = state.diagramZoom;
+  el.planZoomLabel.textContent = label;
+  el.dispatchZoom.value = state.diagramZoom;
+  el.dispatchZoomLabel.textContent = label;
+}
+
+function setDiagramZoom(value) {
+  state.diagramZoom = Number(value) || 1;
+  updateZoomControls();
+  renderPlanTab();
+  renderDispatchTab();
+}
+
+el.planZoom.addEventListener('input', () => setDiagramZoom(el.planZoom.value));
+el.dispatchZoom.addEventListener('input', () => setDiagramZoom(el.dispatchZoom.value));
 
 // ---------- 運転整理 ----------
 
@@ -109,7 +134,7 @@ function renderDispatchTab() {
   renderDiagram(
     el.dispatchDiagram,
     { stations: state.diagram.line.stations, trains: state.diagram.trains },
-    { highlightTrainId: train?.id, adjustedTrain: state.adjustedTrain }
+    { highlightTrainId: train?.id, adjustedTrain: state.adjustedTrain, zoom: state.diagramZoom }
   );
   el.dispatchTable.innerHTML = state.adjustedTrain ? stopTableHtml(state.diagram, { trainOverride: state.adjustedTrain }) : stopTableHtml(state.diagram);
 }
@@ -419,6 +444,7 @@ el.oudDiaCancel.addEventListener('click', () => {
 // ---------- Init ----------
 
 updateFileLabel();
+updateZoomControls();
 renderPlanTab();
 populateDispatchSelectors();
 renderDispatchTab();

@@ -1,4 +1,5 @@
 :root {
+  color-scheme: dark; /* hints native controls (select's option list, scrollbars) to render dark instead of the OS default light, which was unreadable (white-on-white) — issue #8 */
   --color-bg: #14161c;
   --color-panel: #1b1e26;
   --color-text: #e8e8ec;
@@ -6,8 +7,6 @@
   --color-border: #2c303a;
   --color-accent: #4fa3ff;
   --color-warn: #e3a12c;
-  --color-down: #4fa3ff;
-  --color-up: #4ade80;
 }
 
 * { box-sizing: border-box; }
@@ -112,16 +111,37 @@ main { padding: 20px; }
   stroke: var(--color-accent);
   stroke-width: 2;
 }
-.diagram-train-line--down { stroke: var(--color-down); }
-.diagram-train-line--up { stroke: var(--color-up); }
 .diagram-train-line--highlight { stroke: var(--color-warn); stroke-width: 3; }
 .diagram-train-line--adjusted {
   stroke: var(--color-warn);
   stroke-width: 2;
   stroke-dasharray: 5, 4;
 }
-.diagram-legend-label { fill: var(--color-text-dim); font-size: 11px; }
 
+.diagram-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  padding: 0 4px 10px;
+  font-size: 11px;
+  color: var(--color-text-dim);
+}
+.diagram-legend-item { display: flex; align-items: center; gap: 5px; }
+.diagram-legend-swatch { display: block; }
+
+.diagram-zoom-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+  font-size: 12px;
+  color: var(--color-text-dim);
+}
+.diagram-zoom-control input[type="range"] { width: 140px; }
+
+/* 列車数が多いと表が横に長くなりすぎるため（issue #8）、駅名列だけ画面に
+   固定したまま、時刻列だけを横スクロールできるようにする。 */
+.stop-table-scroll { overflow-x: auto; margin-bottom: 16px; }
 .stop-table {
   border-collapse: collapse;
   width: 100%;
@@ -132,8 +152,14 @@ main { padding: 20px; }
   border: 1px solid var(--color-border);
   padding: 6px 10px;
   text-align: center;
+  white-space: nowrap;
 }
 .stop-table th { background: var(--color-panel); color: var(--color-text-dim); font-weight: 500; }
+.stop-table th:first-child {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+}
 .stop-table td input {
   width: 90px;
   background: var(--color-bg);

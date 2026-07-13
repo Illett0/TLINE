@@ -40,8 +40,13 @@
     <section id="tab-plan" class="tab-panel active">
       <h2>計画（ダイヤ）</h2>
       <p class="panel-note" id="plan-note">サンプルダイヤ（data/sampleDiagram.mjs）を表示しています。</p>
+      <div class="diagram-zoom-control">
+        拡大率
+        <input id="plan-zoom" type="range" min="0.3" max="2" step="0.1" value="1" />
+        <span id="plan-zoom-label">100%</span>
+      </div>
       <div id="plan-diagram" class="diagram-container"></div>
-      <table id="plan-table" class="stop-table"></table>
+      <div class="stop-table-scroll"><table id="plan-table" class="stop-table"></table></div>
     </section>
 
     <section id="tab-dispatch" class="tab-panel">
@@ -63,8 +68,13 @@
         <button type="submit">適用</button>
         <button type="button" id="dispatch-reset">リセット</button>
       </form>
+      <div class="diagram-zoom-control">
+        拡大率
+        <input id="dispatch-zoom" type="range" min="0.3" max="2" step="0.1" value="1" />
+        <span id="dispatch-zoom-label">100%</span>
+      </div>
       <div id="dispatch-diagram" class="diagram-container"></div>
-      <table id="dispatch-table" class="stop-table"></table>
+      <div class="stop-table-scroll"><table id="dispatch-table" class="stop-table"></table></div>
     </section>
 
     <section id="tab-actual" class="tab-panel">
@@ -80,7 +90,7 @@
         </label>
       </form>
       <p class="panel-note" id="actual-compare-note"></p>
-      <table id="actual-table" class="stop-table"></table>
+      <div class="stop-table-scroll"><table id="actual-table" class="stop-table"></table></div>
     </section>
   </main>
 
