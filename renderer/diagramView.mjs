@@ -112,10 +112,25 @@ export function renderDiagram(container, { stations, trains }, { highlightTrainI
     if (points.length < 2) continue;
     const d = points.map((p) => p.join(',')).join(' ');
     const isHighlighted = train.id === highlightTrainId;
+    // Direction-based color (see module comment on issue #1): with no
+    // distinction, a dense real-world import (up to ~100 overlapping same-
+    // color lines) reads as "only one direction is drawn" even though both
+    // are present — up/down just can't be told apart at a glance.
+    const directionClass = train.direction === 'up' ? ' diagram-train-line--up' : ' diagram-train-line--down';
     svgParts.push(
-      `<polyline points="${d}" class="diagram-train-line${isHighlighted ? ' diagram-train-line--highlight' : ''}" data-train-id="${train.id}" />`
+      `<polyline points="${d}" class="diagram-train-line${directionClass}${isHighlighted ? ' diagram-train-line--highlight' : ''}" data-train-id="${train.id}" />`
     );
   }
+
+  // Legend so the direction colors above are actually interpretable.
+  svgParts.push(
+    `<g class="diagram-legend">` +
+      `<line x1="${width - 140}" y1="${MARGIN.top - 14}" x2="${width - 116}" y2="${MARGIN.top - 14}" class="diagram-train-line diagram-train-line--down" />` +
+      `<text x="${width - 110}" y="${MARGIN.top - 10}" class="diagram-legend-label">下り</text>` +
+      `<line x1="${width - 70}" y1="${MARGIN.top - 14}" x2="${width - 46}" y2="${MARGIN.top - 14}" class="diagram-train-line diagram-train-line--up" />` +
+      `<text x="${width - 40}" y="${MARGIN.top - 10}" class="diagram-legend-label">上り</text>` +
+      `</g>`
+  );
 
   // The 運転整理-shifted version of one train, overlaid dashed on top of its
   // (still-visible) original plan line — so the delay's effect is visible at
@@ -124,7 +139,9 @@ export function renderDiagram(container, { stations, trains }, { highlightTrainI
     const points = trainPolylinePoints(adjustedTrain, stations, maxDistanceKm, plotHeight, startHour);
     if (points.length >= 2) {
       const d = points.map((p) => p.join(',')).join(' ');
-      svgParts.push(`<polyline points="${d}" class="diagram-train-line diagram-train-line--adjusted" data-train-id="${adjustedTrain.id}" />`);
+      svgParts.push(
+        `<polyline points="${d}" class="diagram-train-line diagram-train-line--adjusted" data-train-id="${adjustedTrain.id}" />`
+      );
     }
   }
 

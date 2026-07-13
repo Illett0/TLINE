@@ -6,6 +6,8 @@
   --color-border: #2c303a;
   --color-accent: #4fa3ff;
   --color-warn: #e3a12c;
+  --color-down: #4fa3ff;
+  --color-up: #4ade80;
 }
 
 * { box-sizing: border-box; }
@@ -110,12 +112,15 @@ main { padding: 20px; }
   stroke: var(--color-accent);
   stroke-width: 2;
 }
+.diagram-train-line--down { stroke: var(--color-down); }
+.diagram-train-line--up { stroke: var(--color-up); }
 .diagram-train-line--highlight { stroke: var(--color-warn); stroke-width: 3; }
 .diagram-train-line--adjusted {
   stroke: var(--color-warn);
   stroke-width: 2;
   stroke-dasharray: 5, 4;
 }
+.diagram-legend-label { fill: var(--color-text-dim); font-size: 11px; }
 
 .stop-table {
   border-collapse: collapse;
