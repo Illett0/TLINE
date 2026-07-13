@@ -83,9 +83,42 @@ function ensureVisibleOnDark(hex) {
 // `variant` — 'plan' (solid, default color) or 'adjusted' (dashed, warning
 // color) — lets 運転整理 draw the original plan and the shifted result on
 // the same axes for comparison.
-function trainPolylinePoints(train, stations, maxDistanceKm, plotHeight, startHour, hourWidth) {
+//
+// Returns an ARRAY OF SEGMENTS (each an array of [x,y] points), not one flat
+// point list — a branching line (e.g. Diagram/高根鉄道TM.oud2's 高岡東 split)
+// is represented in OuDiaSecond by repeating the junction station later in
+// the station list (see NOTES.md「支線・分岐の表現」), so a 支線普通-type
+// train that only serves the branch has stops like
+// [...,{index:1,高岡東,21:08:50},{index:10,高岡東(also!),21:08:50},...] —
+// same instant, station index jumping from 1 to 10. Connecting those two
+// points with a straight line would draw a false diagonal cutting across
+// every station in between (2..9), which it never actually visits — that's
+// exactly the "運行無しのところにも線がある" bug reported against 支線普通.
+// Detected by: zero elapsed time between two consecutive points whose
+// station *order* (position in `stations`, not raw stationId) differs by
+// more than 1 — verified against every Diagram/ sample (57 such jumps, all
+// at a real repeated-junction station; every OTHER index jump >1 in the
+// same data has nonzero elapsed time, i.e. a genuine skip-stop segment that
+// should stay connected).
+function trainPolylineSegments(train, stations, maxDistanceKm, plotHeight, startHour, hourWidth) {
   const byId = new Map(stations.map((s) => [s.id, s]));
-  const points = [];
+  const orderById = new Map(stations.map((s, i) => [s.id, i]));
+  const segments = [];
+  let current = [];
+  let prevOrder = null;
+  let prevSeconds = null;
+
+  const pushPoint = (station, seconds) => {
+    const order = orderById.get(station.id);
+    if (prevOrder != null && Math.abs(order - prevOrder) > 1 && seconds === prevSeconds) {
+      if (current.length >= 2) segments.push(current);
+      current = [];
+    }
+    current.push([timeToX(seconds, startHour, hourWidth), distanceToY(station.distanceKm, maxDistanceKm, plotHeight)]);
+    prevOrder = order;
+    prevSeconds = seconds;
+  };
+
   for (const stop of train.stops) {
     const station = byId.get(stop.stationId);
     if (!station) continue;
@@ -94,14 +127,15 @@ function trainPolylinePoints(train, stations, maxDistanceKm, plotHeight, startHo
     // rather than collapsing to one instant.
     if (stop.arrival != null) {
       const t = parseTime(stop.arrival);
-      if (t != null) points.push([timeToX(t, startHour, hourWidth), distanceToY(station.distanceKm, maxDistanceKm, plotHeight)]);
+      if (t != null) pushPoint(station, t);
     }
     if (stop.departure != null) {
       const t = parseTime(stop.departure);
-      if (t != null) points.push([timeToX(t, startHour, hourWidth), distanceToY(station.distanceKm, maxDistanceKm, plotHeight)]);
+      if (t != null) pushPoint(station, t);
     }
   }
-  return points;
+  if (current.length >= 2) segments.push(current);
+  return segments;
 }
 
 // Builds the little colored-line swatch + label row shown above the
@@ -165,9 +199,8 @@ export function renderDiagram(container, { stations, trains }, { highlightTrainI
   }
 
   for (const train of trains) {
-    const points = trainPolylinePoints(train, stations, maxDistanceKm, plotHeight, startHour, hourWidth);
-    if (points.length < 2) continue;
-    const d = points.map((p) => p.join(',')).join(' ');
+    const segments = trainPolylineSegments(train, stations, maxDistanceKm, plotHeight, startHour, hourWidth);
+    if (segments.length === 0) continue;
     const isHighlighted = train.id === highlightTrainId;
     // Color/style by train type (OuDiaSecond's own Ressyasyubetsu — 普通/
     // 急行/回送 etc., each with its own diagram line color; see NOTES.md
@@ -179,17 +212,20 @@ export function renderDiagram(container, { stations, trains }, { highlightTrainI
       train.trainType && !isHighlighted
         ? ` style="stroke:${ensureVisibleOnDark(train.trainType.color)};${train.trainType.dashArray ? `stroke-dasharray:${train.trainType.dashArray};` : ''}"`
         : '';
-    svgParts.push(
-      `<polyline points="${d}" class="diagram-train-line${isHighlighted ? ' diagram-train-line--highlight' : ''}" data-train-id="${train.id}"${typeStyle} />`
-    );
+    for (const points of segments) {
+      const d = points.map((p) => p.join(',')).join(' ');
+      svgParts.push(
+        `<polyline points="${d}" class="diagram-train-line${isHighlighted ? ' diagram-train-line--highlight' : ''}" data-train-id="${train.id}"${typeStyle} />`
+      );
+    }
   }
 
   // The 運転整理-shifted version of one train, overlaid dashed on top of its
   // (still-visible) original plan line — so the delay's effect is visible at
   // a glance rather than replacing the plan outright.
   if (adjustedTrain) {
-    const points = trainPolylinePoints(adjustedTrain, stations, maxDistanceKm, plotHeight, startHour, hourWidth);
-    if (points.length >= 2) {
+    const segments = trainPolylineSegments(adjustedTrain, stations, maxDistanceKm, plotHeight, startHour, hourWidth);
+    for (const points of segments) {
       const d = points.map((p) => p.join(',')).join(' ');
       svgParts.push(
         `<polyline points="${d}" class="diagram-train-line diagram-train-line--adjusted" data-train-id="${adjustedTrain.id}" />`
