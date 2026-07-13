@@ -70,6 +70,16 @@
     <section id="tab-actual" class="tab-panel">
       <h2>実績</h2>
       <p class="panel-note">計画時刻に対する実際の着発時刻を入力すると、差分（秒）を計算します。入力内容は保存されません（未実装）。</p>
+      <form class="dispatch-form" id="actual-compare-form">
+        <label>
+          比較対象
+          <select id="actual-compare-target">
+            <option value="plan">計画</option>
+            <option value="dispatch">運転整理後</option>
+          </select>
+        </label>
+      </form>
+      <p class="panel-note" id="actual-compare-note"></p>
       <table id="actual-table" class="stop-table"></table>
     </section>
   </main>

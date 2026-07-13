@@ -12,6 +12,7 @@ const state = {
   dispatchDelta: 90,
   adjustedTrain: null, // set once 適用 is pressed; cleared by リセット
   actualByTrainStation: new Map(), // `${trainId}:${stationId}` -> { arrival, departure }
+  actualCompareTarget: 'plan', // 'plan' | 'dispatch' — 実績タブで何と差分を取るか（issue #7）
   pendingOudImport: null, // { filePath, lineName } while the Dia picker is shown; null otherwise
 };
 
@@ -29,6 +30,8 @@ const el = {
   dispatchDiagram: document.getElementById('dispatch-diagram'),
   dispatchTable: document.getElementById('dispatch-table'),
   actualTable: document.getElementById('actual-table'),
+  actualCompareTarget: document.getElementById('actual-compare-target'),
+  actualCompareNote: document.getElementById('actual-compare-note'),
   currentFileLabel: document.getElementById('current-file-label'),
   btnFileOpen: document.getElementById('btn-file-open'),
   btnFileSave: document.getElementById('btn-file-save'),
@@ -116,6 +119,7 @@ el.dispatchTrain.addEventListener('change', () => {
   state.adjustedTrain = null;
   updateDispatchStationOptions();
   renderDispatchTab();
+  renderActualTab(); // adjustedTrainがクリアされたので実績タブの比較基準（issue #7）も更新
 });
 
 el.dispatchForm.addEventListener('submit', (e) => {
@@ -126,11 +130,13 @@ el.dispatchForm.addEventListener('submit', (e) => {
   state.dispatchDelta = Number(el.dispatchDelta.value) || 0;
   state.adjustedTrain = applyDelay(train, state.dispatchStationId, state.dispatchDelta);
   renderDispatchTab();
+  renderActualTab();
 });
 
 el.dispatchReset.addEventListener('click', () => {
   state.adjustedTrain = null;
   renderDispatchTab();
+  renderActualTab();
 });
 
 // ---------- 実績 ----------
@@ -143,10 +149,15 @@ function deltaSeconds(planned, actual) {
 }
 
 function actualTableHtml() {
-  const header = '<tr><th>列車</th><th>駅</th><th>計画着</th><th>実績着</th><th>差</th><th>計画発</th><th>実績発</th><th>差</th></tr>';
+  const compareToDispatch = state.actualCompareTarget === 'dispatch';
+  const baseLabel = compareToDispatch ? '整理後' : '計画';
+  const header = `<tr><th>列車</th><th>駅</th><th>${baseLabel}着</th><th>実績着</th><th>差</th><th>${baseLabel}発</th><th>実績発</th><th>差</th></tr>`;
   const rows = [];
   for (const train of state.diagram.trains) {
-    for (const stop of train.stops) {
+    // 「運転整理後」比較時、state.adjustedTrainは常に1列車分しか保持していない
+    // （運転整理タブのv1仕様）ため、選択中の列車だけ整理後時刻、他は計画時刻のまま。
+    const baseline = compareToDispatch && state.adjustedTrain && state.adjustedTrain.id === train.id ? state.adjustedTrain : train;
+    for (const stop of baseline.stops) {
       const station = state.diagram.line.stations.find((s) => s.id === stop.stationId);
       const key = `${train.id}:${stop.stationId}`;
       const actual = state.actualByTrainStation.get(key) || {};
@@ -179,7 +190,15 @@ function deltaClass(seconds) {
   return seconds > 0 ? 'delta-positive' : seconds < 0 ? 'delta-negative' : '';
 }
 
+function actualCompareNoteText() {
+  if (state.actualCompareTarget !== 'dispatch') return '';
+  if (!state.adjustedTrain) return '運転整理タブでダイヤを適用すると、その列車のみ整理後ダイヤと比較します（未適用の列車は計画のままです）。';
+  return `「${state.adjustedTrain.number}」のみ運転整理後のダイヤと比較しています（他の列車は計画のままです）。`;
+}
+
 function renderActualTab() {
+  el.actualCompareTarget.value = state.actualCompareTarget;
+  el.actualCompareNote.textContent = actualCompareNoteText();
   el.actualTable.innerHTML = actualTableHtml();
   el.actualTable.querySelectorAll('input').forEach((input) => {
     input.addEventListener('change', () => {
@@ -192,6 +211,11 @@ function renderActualTab() {
     });
   });
 }
+
+el.actualCompareTarget.addEventListener('change', () => {
+  state.actualCompareTarget = el.actualCompareTarget.value;
+  renderActualTab();
+});
 
 // ---------- ファイル操作（開く・保存・最近使ったファイル） ----------
 //
@@ -242,6 +266,7 @@ function loadDiagram(diagram, filePath, description) {
   state.dispatchStationId = diagram.trains[0]?.stops?.[0]?.stationId ?? null;
   state.adjustedTrain = null;
   state.actualByTrainStation = new Map();
+  state.actualCompareTarget = 'plan';
 
   updateFileLabel();
   renderPlanTab();
