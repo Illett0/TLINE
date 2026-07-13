@@ -15,6 +15,7 @@
       <button class="tab-button" data-tab="actual">実績</button>
     </nav>
     <div id="file-toolbar">
+      <button id="btn-theme-toggle" type="button" title="ライト/ダークテーマ切り替え">🌙 ダーク</button>
       <span id="current-file-label">（サンプルデータ）</span>
       <button id="btn-file-open" type="button">開く</button>
       <button id="btn-file-save" type="button" disabled>保存</button>
@@ -44,6 +45,8 @@
         拡大率
         <input id="plan-zoom" type="range" min="0.3" max="2" step="0.1" value="1" />
         <span id="plan-zoom-label">100%</span>
+        <label><input id="plan-show-depot" type="checkbox" checked /> 入出庫記号</label>
+        <label><input id="plan-show-opnum" type="checkbox" checked /> 運用番号</label>
       </div>
       <div id="plan-diagram" class="diagram-container"></div>
       <div class="stop-table-scroll"><table id="plan-table" class="stop-table"></table></div>
@@ -72,6 +75,8 @@
         拡大率
         <input id="dispatch-zoom" type="range" min="0.3" max="2" step="0.1" value="1" />
         <span id="dispatch-zoom-label">100%</span>
+        <label><input id="dispatch-show-depot" type="checkbox" checked /> 入出庫記号</label>
+        <label><input id="dispatch-show-opnum" type="checkbox" checked /> 運用番号</label>
       </div>
       <div id="dispatch-diagram" class="diagram-container"></div>
       <div class="stop-table-scroll"><table id="dispatch-table" class="stop-table"></table></div>

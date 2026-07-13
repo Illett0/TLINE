@@ -15,6 +15,9 @@ const state = {
   actualCompareTarget: 'plan', // 'plan' | 'dispatch' — 実績タブで何と差分を取るか（issue #7）
   pendingOudImport: null, // { filePath, lineName } while the Dia picker is shown; null otherwise
   diagramZoom: 1, // 計画・運転整理タブ共通のダイヤグラム拡大率（issue #8）
+  theme: localStorage.getItem('tline-theme') === 'light' ? 'light' : 'dark', // ライト/ダークテーマ切り替え
+  showDepotMarkers: true, // 入出庫記号（○出区／▽入区）の表示切り替え。統計的推定のためデフォルトON+トグルで対応（NOTES.md「運用番号・入出庫の解読」）
+  showOperationNumbers: true, // 運用番号ラベルの表示切り替え（同上）
 };
 
 const el = {
@@ -34,6 +37,11 @@ const el = {
   planZoomLabel: document.getElementById('plan-zoom-label'),
   dispatchZoom: document.getElementById('dispatch-zoom'),
   dispatchZoomLabel: document.getElementById('dispatch-zoom-label'),
+  btnThemeToggle: document.getElementById('btn-theme-toggle'),
+  planShowDepot: document.getElementById('plan-show-depot'),
+  planShowOpnum: document.getElementById('plan-show-opnum'),
+  dispatchShowDepot: document.getElementById('dispatch-show-depot'),
+  dispatchShowOpnum: document.getElementById('dispatch-show-opnum'),
   actualTable: document.getElementById('actual-table'),
   actualCompareTarget: document.getElementById('actual-compare-target'),
   actualCompareNote: document.getElementById('actual-compare-note'),
@@ -81,30 +89,76 @@ function stopTableHtml(diagram, { trainOverride } = {}) {
   return header + rows;
 }
 
+function diagramDisplayOptions() {
+  return {
+    zoom: state.diagramZoom,
+    theme: state.theme,
+    showDepotMarkers: state.showDepotMarkers,
+    showOperationNumbers: state.showOperationNumbers,
+  };
+}
+
 function renderPlanTab() {
-  renderDiagram(el.planDiagram, { stations: state.diagram.line.stations, trains: state.diagram.trains }, { zoom: state.diagramZoom });
+  renderDiagram(el.planDiagram, { stations: state.diagram.line.stations, trains: state.diagram.trains }, diagramDisplayOptions());
   el.planTable.innerHTML = stopTableHtml(state.diagram);
 }
 
-// ---------- ダイヤグラムの拡大率（計画・運転整理タブ共通、issue #8） ----------
+// ---------- ダイヤグラムの表示設定（拡大率・テーマ・入出庫記号・運用番号、計画・運転整理タブ共通） ----------
+//
+// issue #8（拡大縮小・テーマ）、参考画像Diagram/image/06123.png（入出庫記号・
+// 運用番号）参照。入出庫記号・運用番号は`lib/oudParser.js`のOperationプロパ
+// ティ解読が公式仕様の裏付けなし・統計的推定であるため、デフォルトONに
+// しつつ簡単にOFFにできるようトグルを用意している（NOTES.md参照）。
 
-function updateZoomControls() {
-  const label = `${Math.round(state.diagramZoom * 100)}%`;
+function updateDiagramControls() {
+  const zoomLabel = `${Math.round(state.diagramZoom * 100)}%`;
   el.planZoom.value = state.diagramZoom;
-  el.planZoomLabel.textContent = label;
+  el.planZoomLabel.textContent = zoomLabel;
   el.dispatchZoom.value = state.diagramZoom;
-  el.dispatchZoomLabel.textContent = label;
+  el.dispatchZoomLabel.textContent = zoomLabel;
+  el.planShowDepot.checked = state.showDepotMarkers;
+  el.dispatchShowDepot.checked = state.showDepotMarkers;
+  el.planShowOpnum.checked = state.showOperationNumbers;
+  el.dispatchShowOpnum.checked = state.showOperationNumbers;
+  el.btnThemeToggle.textContent = state.theme === 'light' ? '☀️ ライト' : '🌙 ダーク';
 }
 
 function setDiagramZoom(value) {
   state.diagramZoom = Number(value) || 1;
-  updateZoomControls();
+  updateDiagramControls();
   renderPlanTab();
   renderDispatchTab();
 }
 
 el.planZoom.addEventListener('input', () => setDiagramZoom(el.planZoom.value));
 el.dispatchZoom.addEventListener('input', () => setDiagramZoom(el.dispatchZoom.value));
+
+function setShowDepotMarkers(checked) {
+  state.showDepotMarkers = checked;
+  updateDiagramControls();
+  renderPlanTab();
+  renderDispatchTab();
+}
+el.planShowDepot.addEventListener('change', () => setShowDepotMarkers(el.planShowDepot.checked));
+el.dispatchShowDepot.addEventListener('change', () => setShowDepotMarkers(el.dispatchShowDepot.checked));
+
+function setShowOperationNumbers(checked) {
+  state.showOperationNumbers = checked;
+  updateDiagramControls();
+  renderPlanTab();
+  renderDispatchTab();
+}
+el.planShowOpnum.addEventListener('change', () => setShowOperationNumbers(el.planShowOpnum.checked));
+el.dispatchShowOpnum.addEventListener('change', () => setShowOperationNumbers(el.dispatchShowOpnum.checked));
+
+el.btnThemeToggle.addEventListener('click', () => {
+  state.theme = state.theme === 'light' ? 'dark' : 'light';
+  localStorage.setItem('tline-theme', state.theme);
+  document.documentElement.dataset.theme = state.theme;
+  updateDiagramControls();
+  renderPlanTab();
+  renderDispatchTab();
+});
 
 // ---------- 運転整理 ----------
 
@@ -134,7 +188,7 @@ function renderDispatchTab() {
   renderDiagram(
     el.dispatchDiagram,
     { stations: state.diagram.line.stations, trains: state.diagram.trains },
-    { highlightTrainId: train?.id, adjustedTrain: state.adjustedTrain, zoom: state.diagramZoom }
+    { highlightTrainId: train?.id, adjustedTrain: state.adjustedTrain, ...diagramDisplayOptions() }
   );
   el.dispatchTable.innerHTML = state.adjustedTrain ? stopTableHtml(state.diagram, { trainOverride: state.adjustedTrain }) : stopTableHtml(state.diagram);
 }
@@ -443,8 +497,9 @@ el.oudDiaCancel.addEventListener('click', () => {
 
 // ---------- Init ----------
 
+document.documentElement.dataset.theme = state.theme;
 updateFileLabel();
-updateZoomControls();
+updateDiagramControls();
 renderPlanTab();
 populateDispatchSelectors();
 renderDispatchTab();

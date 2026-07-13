@@ -138,6 +138,29 @@ function trainPolylineSegments(train, stations, maxDistanceKm, plotHeight, start
   return segments;
 }
 
+// Small ○ (出区/leaves depot) or ▽ (入区/enters depot) marker at a train's
+// origin/terminus point, drawn in that train's own line color — see
+// NOTES.md「運用番号・入出庫の解読」for how confident this is (only drawn
+// when `operation.origin`/`.terminal` is non-null and `linked` is false;
+// anything uncertain — including the whole thing when a caller passes
+// `showDepotMarkers: false` — draws nothing rather than guessing).
+function depotMarkerSvg([x, y], kind, color) {
+  if (kind === 'origin') return `<circle cx="${x}" cy="${y}" r="5" class="diagram-depot-marker" style="stroke:${color};" />`;
+  const size = 6;
+  return `<polygon points="${x - size},${y - size} ${x + size},${y - size} ${x},${y + size}" class="diagram-depot-marker" style="stroke:${color};" />`;
+}
+
+// The short operation-number label ("10A", "82B" — matches
+// Diagram/image/06123.png) shown next to a train's origin point when its
+// `operation.origin` is linked to an incoming operation. See
+// parseOperationEndpoint in lib/oudParser.js for where this string comes
+// from and how confident it is (fairly — it's copied verbatim, not
+// inferred) versus the still-unimplemented connecting line itself (not
+// confident enough to draw — see NOTES.md).
+function operationLabelSvg([x, y], text, color) {
+  return `<text x="${x + 8}" y="${y - 8}" class="diagram-operation-label" style="fill:${color};">${text}</text>`;
+}
+
 // Builds the little colored-line swatch + label row shown above the
 // diagram, one entry per distinct train type actually present among
 // `trains` (not every type declared in the source file — an unused type
@@ -145,7 +168,7 @@ function trainPolylineSegments(train, stations, maxDistanceKm, plotHeight, start
 // naturally via CSS flex-wrap regardless of how many types a file declares
 // (real samples range from 2 to 9 — see NOTES.md「種別ごとの色分け」)
 // instead of needing hand-rolled column/row math inside the SVG.
-function legendHtml(trains) {
+function legendHtml(trains, resolveColor) {
   const seen = new Map();
   for (const train of trains) {
     if (!train.trainType || seen.has(train.trainType.name)) continue;
@@ -154,7 +177,7 @@ function legendHtml(trains) {
   if (seen.size === 0) return '';
   const items = [...seen.values()]
     .map((type) => {
-      const color = ensureVisibleOnDark(type.color);
+      const color = resolveColor(type.color);
       const dash = type.dashArray ? ` stroke-dasharray="${type.dashArray}"` : '';
       return (
         `<span class="diagram-legend-item">` +
@@ -172,7 +195,20 @@ function legendHtml(trains) {
 // shrunk to fit without changing any underlying data (see issue #8's "拡大
 // 縮小...スライダーが欲しい" request). renderer/app.mjs owns the actual
 // slider state and re-calls renderDiagram with a new value.
-export function renderDiagram(container, { stations, trains }, { highlightTrainId, adjustedTrain, zoom = 1 } = {}) {
+// `theme` — 'dark' (default) or 'light'; only affects whether train-type
+// colors get the dark-background visibility blend (see ensureVisibleOnDark)
+// — OuDiaSecond's own colors already assume a light/white background, so on
+// `theme: 'light'` they're used completely as-is (matching
+// Diagram/image/06123.png, the reference the project owner supplied).
+// `showDepotMarkers`/`showOperationNumbers` (both default true) toggle the
+// 入出庫記号/運用番号 overlays — see depotMarkerSvg/operationLabelSvg and
+// NOTES.md「運用番号・入出庫の解読」for how much of this is confirmed vs.
+// statistically inferred from real files (no official grammar was found).
+export function renderDiagram(
+  container,
+  { stations, trains },
+  { highlightTrainId, adjustedTrain, zoom = 1, theme = 'dark', showDepotMarkers = true, showOperationNumbers = true } = {}
+) {
   const maxDistanceKm = Math.max(...stations.map((s) => s.distanceKm), 1);
   const plotHeight = Math.max(200, stations.length * 60 * zoom);
   const hourWidth = HOUR_WIDTH * zoom;
@@ -180,6 +216,7 @@ export function renderDiagram(container, { stations, trains }, { highlightTrainI
   const plotWidth = (endHour - startHour) * hourWidth;
   const width = MARGIN.left + plotWidth + MARGIN.right;
   const height = MARGIN.top + plotHeight + MARGIN.bottom;
+  const resolveColor = (hex) => (theme === 'light' ? hex : ensureVisibleOnDark(hex));
 
   const svgParts = [];
   svgParts.push(`<svg viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" class="diagram-svg">`);
@@ -208,15 +245,29 @@ export function renderDiagram(container, { stations, trains }, { highlightTrainI
     // style) for data with no type info, e.g. hand-authored plan data.
     // Skipped while highlighted so the highlight color (set by the CSS
     // class below, which an inline style would otherwise outrank) wins.
+    const resolvedColor = train.trainType ? resolveColor(train.trainType.color) : null;
     const typeStyle =
-      train.trainType && !isHighlighted
-        ? ` style="stroke:${ensureVisibleOnDark(train.trainType.color)};${train.trainType.dashArray ? `stroke-dasharray:${train.trainType.dashArray};` : ''}"`
+      resolvedColor && !isHighlighted
+        ? ` style="stroke:${resolvedColor};${train.trainType.dashArray ? `stroke-dasharray:${train.trainType.dashArray};` : ''}"`
         : '';
     for (const points of segments) {
       const d = points.map((p) => p.join(',')).join(' ');
       svgParts.push(
         `<polyline points="${d}" class="diagram-train-line${isHighlighted ? ' diagram-train-line--highlight' : ''}" data-train-id="${train.id}"${typeStyle} />`
       );
+    }
+
+    const markerColor = resolvedColor || 'var(--color-accent)';
+    const firstPoint = segments[0][0];
+    const lastSegment = segments[segments.length - 1];
+    const lastPoint = lastSegment[lastSegment.length - 1];
+    if (train.operation) {
+      const { origin, terminal } = train.operation;
+      if (showDepotMarkers && origin && !origin.linked) svgParts.push(depotMarkerSvg(firstPoint, 'origin', markerColor));
+      if (showDepotMarkers && terminal && !terminal.linked) svgParts.push(depotMarkerSvg(lastPoint, 'terminal', markerColor));
+      if (showOperationNumbers && origin && origin.linked && origin.operationNumber) {
+        svgParts.push(operationLabelSvg(firstPoint, origin.operationNumber, markerColor));
+      }
     }
   }
 
@@ -234,5 +285,5 @@ export function renderDiagram(container, { stations, trains }, { highlightTrainI
   }
 
   svgParts.push('</svg>');
-  container.innerHTML = legendHtml(trains) + svgParts.join('');
+  container.innerHTML = legendHtml(trains, resolveColor) + svgParts.join('');
 }
