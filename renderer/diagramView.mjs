@@ -10,7 +10,16 @@
 
 import { parseTime } from './timeUtils.mjs';
 
-const MARGIN = { top: 24, right: 24, bottom: 32, left: 64 };
+// Exported so renderer/app.mjs's wheel-zoom handler (see setupDiagramPanZoom)
+// can convert a screen/scroll x-coordinate to the same content-space x the
+// SVG itself uses (timeToX below always starts at MARGIN.left, not 0) when
+// keeping the point under the cursor fixed across a zoom step.
+// top/bottom leave room for the hour-label row PLUS a turnback arc + its
+// operation number bulging past the first/last station's line (the arc cap
+// extends TURNBACK_BULGE px outside the plot and its number another ~13px —
+// with the old 24px top margin those landed exactly on the hour labels
+// whenever the line's terminus station was the diagram's top row).
+export const MARGIN = { top: 52, right: 24, bottom: 48, left: 64 };
 const HOUR_WIDTH = 90; // px per hour on the time axis
 const FALLBACK_START_HOUR = 5; // used only when a diagram has no decodable stop times at all
 const FALLBACK_END_HOUR = 26;
@@ -94,29 +103,35 @@ function ensureVisibleOnDark(hex) {
 // points with a straight line would draw a false diagonal cutting across
 // every station in between (2..9), which it never actually visits — that's
 // exactly the "運行無しのところにも線がある" bug reported against 支線普通.
-// Detected by: zero elapsed time between two consecutive points whose
-// station *order* (position in `stations`, not raw stationId) differs by
-// more than 1 — verified against every Diagram/ sample (57 such jumps, all
-// at a real repeated-junction station; every OTHER index jump >1 in the
-// same data has nonzero elapsed time, i.e. a genuine skip-stop segment that
-// should stay connected).
+// Detected by: two consecutive points whose station *order* (position in
+// `stations`, not raw stationId) differs by more than 1, AND whose station
+// *name* is the same (the repeated-junction signature) — verified against
+// every Diagram/ sample (132 such jumps, all at a real repeated-junction
+// station; every OTHER order jump >1 in the same data has a different
+// station name, i.e. a genuine skip-stop segment that should stay
+// connected). Originally this checked "zero elapsed time" instead of same
+// name, which only caught the 下り(down) direction's 57 cases — 上り(up)
+// trains cross the same junction with a nonzero gap between its two
+// station-list entries (real transfer/reversal time at 高岡東, e.g. ~3min),
+// so the elapsed-time check silently let the false diagonal through for
+// every up-direction 支線普通 train even after the down-direction fix.
 function trainPolylineSegments(train, stations, maxDistanceKm, plotHeight, startHour, hourWidth) {
   const byId = new Map(stations.map((s) => [s.id, s]));
   const orderById = new Map(stations.map((s, i) => [s.id, i]));
   const segments = [];
   let current = [];
   let prevOrder = null;
-  let prevSeconds = null;
+  let prevName = null;
 
   const pushPoint = (station, seconds) => {
     const order = orderById.get(station.id);
-    if (prevOrder != null && Math.abs(order - prevOrder) > 1 && seconds === prevSeconds) {
+    if (prevOrder != null && Math.abs(order - prevOrder) > 1 && station.name === prevName) {
       if (current.length >= 2) segments.push(current);
       current = [];
     }
     current.push([timeToX(seconds, startHour, hourWidth), distanceToY(station.distanceKm, maxDistanceKm, plotHeight)]);
     prevOrder = order;
-    prevSeconds = seconds;
+    prevName = station.name;
   };
 
   for (const stop of train.stops) {
@@ -138,12 +153,19 @@ function trainPolylineSegments(train, stations, maxDistanceKm, plotHeight, start
   return segments;
 }
 
-// Small ○ (出区/leaves depot) or ▽ (入区/enters depot) marker at a train's
-// origin/terminus point, drawn in that train's own line color — see
-// NOTES.md「運用番号・入出庫の解読」for how confident this is (only drawn
-// when `operation.origin`/`.terminal` is non-null and `linked` is false;
-// anything uncertain — including the whole thing when a caller passes
-// `showDepotMarkers: false` — draws nothing rather than guessing).
+// Small ○ (出区/leaves depot・路線外始発) or ▽ (入区/enters depot・路線外終着)
+// marker at a train's origin/terminus point, drawn in that train's own line
+// color. Definition (2026-07-14, see NOTES.md「入出庫の定義」): a boundary
+// marker is drawn at an endpoint whenever renderDiagram's caller did NOT
+// find an operation-chain partner for it (see `chainNextTrainId`/
+// `chainPrevTrainId` in lib/oudParser.js's inferOperationChains) — NOT based
+// on the Operation field's own `linked` code, which turned out unreliable in
+// both directions: a `linked: true` endpoint (e.g. 高根鉄道TM.oud2's
+// 回2010A) can have no real previous train, AND a `linked: false` endpoint
+// (2110A's origin, in the same file) can still be a genuine same-track
+// hand-off from another train. Whenever a chain partner *is* found, a
+// connecting line is drawn instead (see operationChainLineSvg) and no
+// boundary marker is drawn on that end.
 function depotMarkerSvg([x, y], kind, color) {
   if (kind === 'origin') return `<circle cx="${x}" cy="${y}" r="5" class="diagram-depot-marker" style="stroke:${color};" />`;
   const size = 6;
@@ -151,14 +173,124 @@ function depotMarkerSvg([x, y], kind, color) {
 }
 
 // The short operation-number label ("10A", "82B" — matches
-// Diagram/image/06123.png) shown next to a train's origin point when its
-// `operation.origin` is linked to an incoming operation. See
-// parseOperationEndpoint in lib/oudParser.js for where this string comes
-// from and how confident it is (fairly — it's copied verbatim, not
-// inferred) versus the still-unimplemented connecting line itself (not
-// confident enough to draw — see NOTES.md).
-function operationLabelSvg([x, y], text, color) {
-  return `<text x="${x + 8}" y="${y - 8}" class="diagram-operation-label" style="fill:${color};">${text}</text>`;
+// Diagram/image/06123.png) shown beside a train's depot-boundary ○/▽
+// marker whenever that endpoint's `operationNumber` is present (matches the
+// OuDiaSecond manual's "出区の○印及び入区の△印の横に、運用番号が表記され
+// ます"). `side` — 'left' for an origin ○ (the train line extends to the
+// right, so the left is clear) / 'right' for a terminus ▽ (line arrives
+// from the left) — matching the reference image, where the number sits
+// horizontally next to the marker on the side away from the line.
+// Chain-matched endpoints don't use this — their number is drawn once per
+// pair at the turnback arc's apex instead (see turnbackNumberSvg).
+function operationLabelSvg([x, y], text, color, side) {
+  if (side === 'left') {
+    return `<text x="${x - 9}" y="${y + 3}" text-anchor="end" class="diagram-operation-label" style="fill:${color};">${text}</text>`;
+  }
+  return `<text x="${x + 9}" y="${y + 3}" class="diagram-operation-label" style="fill:${color};">${text}</text>`;
+}
+
+// 折り返しのつなぎ: the connection between two trains inferOperationChains
+// matched as the same physical train set continuing under a new number.
+// Drawn as a smooth rounded cap (quarter-curve corners + flat middle) that
+// bulges past the station line AWAY from the two train lines — matching
+// Diagram/image/06123.png, where an arriving line curves over the station
+// line and comes back down as the departing line, reading as one continuous
+// stroke (2026-07-15 feedback: "折り返しのつなぎ方…もっと06123に近づけて").
+// This replaces the previous straight line nudged 5px below the station
+// gridline with end/middle dots — the bulge itself now keeps the connector
+// clear of the gridline, so no offset or dots are needed.
+//
+// Both chain endpoints land on the same station (same y — see
+// inferOperationChains), so the bulge side is decided by where the two
+// lines' neighbor points sit: both below the station → the station is the
+// apex of the turnback → bulge up; both above → bulge down; mixed (a
+// same-direction continuation rather than a reversal, rare) → a small
+// downward bulge just to stay off the gridline.
+const TURNBACK_BULGE = 9; // px past the station line the cap extends
+const TURNBACK_CORNER = 12; // max horizontal radius of the rounded corners
+
+function turnbackGeometry(fromEnd, fromInner, toStart, toInner) {
+  const [x1, y1] = fromEnd;
+  const [x2, y2] = toStart;
+  const yRef = (y1 + y2) / 2;
+  const fromBelow = fromInner ? fromInner[1] > yRef + 0.5 : false;
+  const toBelow = toInner ? toInner[1] > yRef + 0.5 : false;
+  const fromAbove = fromInner ? fromInner[1] < yRef - 0.5 : false;
+  const toAbove = toInner ? toInner[1] < yRef - 0.5 : false;
+  let sign;
+  let bulge;
+  if (fromBelow && toBelow) {
+    sign = -1;
+    bulge = TURNBACK_BULGE;
+  } else if (fromAbove && toAbove) {
+    sign = 1;
+    bulge = TURNBACK_BULGE;
+  } else {
+    sign = 1;
+    bulge = 5;
+  }
+  const apexY = yRef + sign * bulge;
+  const mx = (x1 + x2) / 2;
+  const rx = Math.min(TURNBACK_CORNER, Math.max((x2 - x1) / 2, 0));
+  return { x1, y1, x2, y2, apexY, mx, rx, sign };
+}
+
+// Split at the midpoint into two paths so each half carries its own train's
+// type color AND dash pattern (a 回送 leg keeps its dashed style through the
+// turnback, as in the reference image's green 82B arcs).
+function turnbackArcSvg(geo, fromColor, fromDash, toColor, toDash) {
+  const { x1, y1, x2, y2, apexY, mx, rx } = geo;
+  const c1 = Math.min(x1 + rx, mx);
+  const c2 = Math.max(x2 - rx, mx);
+  const d1 = `M ${x1} ${y1} Q ${x1} ${apexY} ${c1} ${apexY}` + (c1 < mx ? ` L ${mx} ${apexY}` : '');
+  const d2 = (c2 > mx ? `M ${mx} ${apexY} L ${c2} ${apexY}` : `M ${mx} ${apexY}`) + ` Q ${x2} ${apexY} ${x2} ${y2}`;
+  const dashStyle = (dash) => (dash ? `stroke-dasharray:${dash};` : '');
+  return (
+    `<path d="${d1}" class="diagram-operation-chain-line" style="stroke:${fromColor};${dashStyle(fromDash)}" />` +
+    `<path d="${d2}" class="diagram-operation-chain-line" style="stroke:${toColor};${dashStyle(toDash)}" />`
+  );
+}
+
+// 折り返し運番: drawn ONCE per matched pair, horizontally centered on the
+// outside of the turnback arc's apex (above an upward cap, below a downward
+// one) — matching the reference image's "14A"/"10A" over the caps at 高岡
+// and under the dips at 高根港. Replaces the previous per-endpoint labels,
+// which drew the same number twice (once at each train's endpoint) slightly
+// offset from each other.
+function turnbackNumberSvg(geo, text, color) {
+  const y = geo.sign < 0 ? geo.apexY - 4 : geo.apexY + 13;
+  return `<text x="${geo.mx}" y="${y}" text-anchor="middle" class="diagram-operation-label" style="fill:${color};">${text}</text>`;
+}
+
+// The train's own number ("2110A" etc.), drawn ALONG its own line — rotated
+// to the slope of the first actually-moving stretch and sitting just above
+// it, the way the reference image writes "2114A" diagonally along each
+// departing stroke (2026-07-15 feedback: "列番表示の場所…もっと06123に
+// 近づけて"; previously this was a horizontal label floating at the origin
+// point). Uses the first point pair with real horizontal AND vertical
+// movement so a dwell (flat) segment at the origin doesn't yield a bogus
+// 0° angle; falls back to the first segment's overall direction for trains
+// that never move vertically (degenerate but possible in hand-made data).
+function trainNumberLabelSvg(segments, text, color) {
+  let pair = null;
+  for (const points of segments) {
+    for (let i = 0; i + 1 < points.length; i++) {
+      if (points[i + 1][0] - points[i][0] > 1 && Math.abs(points[i + 1][1] - points[i][1]) > 1) {
+        pair = [points[i], points[i + 1]];
+        break;
+      }
+    }
+    if (pair) break;
+  }
+  if (!pair) {
+    const points = segments[0];
+    pair = [points[0], points[points.length - 1]];
+  }
+  const [[ax, ay], [bx, by]] = pair;
+  const mx = (ax + bx) / 2;
+  const my = (ay + by) / 2;
+  const angle = Math.round(Math.atan2(by - ay, bx - ax) * (180 / Math.PI) * 10) / 10;
+  return `<text transform="translate(${mx} ${my}) rotate(${angle})" dy="-3" text-anchor="middle" class="diagram-train-number-label" style="fill:${color};">${text}</text>`;
 }
 
 // Builds the little colored-line swatch + label row shown above the
@@ -190,33 +322,78 @@ function legendHtml(trains, resolveColor) {
   return `<div class="diagram-legend">${items}</div>`;
 }
 
-// `zoom` — a display-only scale multiplier (default 1) applied uniformly to
-// both axes' pixel-per-unit density, so a dense real-world import can be
-// shrunk to fit without changing any underlying data (see issue #8's "拡大
-// 縮小...スライダーが欲しい" request). renderer/app.mjs owns the actual
-// slider state and re-calls renderDiagram with a new value.
-// `theme` — 'dark' (default) or 'light'; only affects whether train-type
-// colors get the dark-background visibility blend (see ensureVisibleOnDark)
-// — OuDiaSecond's own colors already assume a light/white background, so on
-// `theme: 'light'` they're used completely as-is (matching
-// Diagram/image/06123.png, the reference the project owner supplied).
-// `showDepotMarkers`/`showOperationNumbers` (both default true) toggle the
-// 入出庫記号/運用番号 overlays — see depotMarkerSvg/operationLabelSvg and
-// NOTES.md「運用番号・入出庫の解読」for how much of this is confirmed vs.
-// statistically inferred from real files (no official grammar was found).
+// `zoomY` — a display-only scale multiplier (default 1) applied to the
+// vertical (station-spacing) pixel density only, so a dense real-world
+// import can be shrunk to fit without changing any underlying data (see
+// issue #8's "拡大縮小...スライダーが欲しい" request). Driven by dedicated
+// ＋/－ buttons in renderer/app.mjs (`stepDiagramZoomY`) — a plain slider
+// used to control both axes at once, which got confusing once horizontal
+// zoom moved to the mouse wheel (below), so vertical got its own explicit
+// control (2026-07-14 feedback: "縦方向のズームと縮小は専用のボタンで").
+// `zoomX` — the horizontal-only multiplier (`hourWidth = HOUR_WIDTH *
+// zoomX`, entirely independent from `zoomY`/`plotHeight`) — driven by the
+// mouse wheel over the diagram (renderer/app.mjs's setupDiagramPanZoom),
+// matching the "縦固定・横方向のみホイールでズーム" request: the time axis
+// can be zoomed independently for a closer look at a dense stretch of a
+// dense timetable without also stretching the (already-fixed) station
+// spacing.
+// `theme` — 'dark' (default), 'light', or 'classic'; only 'dark' applies the
+// dark-background visibility blend to train-type colors (see
+// ensureVisibleOnDark) — OuDiaSecond's own colors already assume a
+// light/white background, so both 'light' and 'classic' use them completely
+// as-is (matching Diagram/image/06123.png, the reference the project owner
+// supplied). 'classic' additionally draws 10-minute minor gridlines (inline
+// below, right after the station gridlines) to match that reference's
+// denser grid — issue #8's "クラシックモード(oudUIをがっつり参考に)"
+// request; 'dark'/'light' don't draw them at all (rather than
+// drawing-but-hiding via CSS) since nothing else about those two themes
+// calls for the denser grid.
+// Five independent overlay toggles (all default true, issue #10,
+// 2026-07-14 split from the original 2 — "入出庫記号" and "運用番号" —
+// into 5 so each renders/hides on its own):
+//   showDepotMarkers            — 入出庫記号(○/▽), drawn at an endpoint
+//                                 whenever inferOperationChains found NO
+//                                 chain partner there (see depotMarkerSvg).
+//   showChainLines              — 運用のつなぎ線 (operationChainLineSvg),
+//                                 drawn once per chain-matched pair.
+//   showDepotOperationNumbers   — 入出庫運番: the Operation field's
+//                                 operationNumber label at an endpoint with
+//                                 NO chain partner (alongside a depot
+//                                 marker, when showDepotMarkers is also on).
+//   showTurnbackOperationNumbers — 折り返し運番: the same label, but at an
+//                                 endpoint that DOES have a chain partner
+//                                 (alongside a connecting line).
+//   showTrainNumbers            — the train's own number (trainNumberLabelSvg).
+// Depot-vs-chain status is independent of these toggles (it's a property of
+// the data, from inferOperationChains) — the toggles only control which of
+// the two mutually-exclusive renderings (marker vs. line, depot-number vs.
+// turnback-number) is drawn for the endpoints that actually have that
+// status; an endpoint whose status is hidden by its toggle draws nothing,
+// it does not fall back to the other rendering.
 export function renderDiagram(
   container,
   { stations, trains },
-  { highlightTrainId, adjustedTrain, zoom = 1, theme = 'dark', showDepotMarkers = true, showOperationNumbers = true } = {}
+  {
+    highlightTrainId,
+    adjustedTrain,
+    zoomY = 1,
+    zoomX = 1,
+    theme = 'dark',
+    showDepotMarkers = true,
+    showChainLines = true,
+    showDepotOperationNumbers = true,
+    showTurnbackOperationNumbers = true,
+    showTrainNumbers = true,
+  } = {}
 ) {
   const maxDistanceKm = Math.max(...stations.map((s) => s.distanceKm), 1);
-  const plotHeight = Math.max(200, stations.length * 60 * zoom);
-  const hourWidth = HOUR_WIDTH * zoom;
+  const plotHeight = Math.max(200, stations.length * 60 * zoomY);
+  const hourWidth = HOUR_WIDTH * zoomX;
   const { startHour, endHour } = computeHourRange(adjustedTrain ? [...trains, adjustedTrain] : trains);
   const plotWidth = (endHour - startHour) * hourWidth;
   const width = MARGIN.left + plotWidth + MARGIN.right;
   const height = MARGIN.top + plotHeight + MARGIN.bottom;
-  const resolveColor = (hex) => (theme === 'light' ? hex : ensureVisibleOnDark(hex));
+  const resolveColor = (hex) => (theme === 'dark' ? ensureVisibleOnDark(hex) : hex);
 
   const svgParts = [];
   svgParts.push(`<svg viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" class="diagram-svg">`);
@@ -228,12 +405,36 @@ export function renderDiagram(
     svgParts.push(`<text x="${MARGIN.left - 8}" y="${y + 4}" class="diagram-station-label" text-anchor="end">${station.name}</text>`);
   }
 
-  // Hourly vertical gridlines + labels.
+  // Classic theme only: 10-minute minor gridlines between each hour line,
+  // drawn first so the hour lines/train lines layer on top — see the
+  // renderDiagram doc comment above for why this is theme-gated instead of
+  // always-rendered-but-CSS-hidden.
+  if (theme === 'classic') {
+    for (let h = startHour; h < endHour; h++) {
+      for (let m = 10; m < 60; m += 10) {
+        const x = timeToX(h * 3600 + m * 60, startHour, hourWidth);
+        svgParts.push(`<line x1="${x}" y1="${MARGIN.top}" x2="${x}" y2="${MARGIN.top + plotHeight}" class="diagram-grid-line-minor" />`);
+      }
+    }
+  }
+
+  // Hourly vertical gridlines + labels. Labeled at the top edge (matching
+  // Diagram/image/06123.png, whose hour row runs along the top) AND at the
+  // bottom — a tall diagram lives in a vertically-scrolling container, so
+  // whichever edge is currently visible still has readable hour marks.
   for (let h = startHour; h <= endHour; h++) {
     const x = timeToX(h * 3600, startHour, hourWidth);
     svgParts.push(`<line x1="${x}" y1="${MARGIN.top}" x2="${x}" y2="${MARGIN.top + plotHeight}" class="diagram-grid-line" />`);
-    svgParts.push(`<text x="${x}" y="${MARGIN.top + plotHeight + 18}" class="diagram-hour-label" text-anchor="middle">${h % 24}</text>`);
+    svgParts.push(`<text x="${x}" y="${MARGIN.top - 30}" class="diagram-hour-label" text-anchor="middle">${h % 24}</text>`);
+    svgParts.push(`<text x="${x}" y="${MARGIN.top + plotHeight + 34}" class="diagram-hour-label" text-anchor="middle">${h % 24}</text>`);
   }
+
+  // First point / last point / resolved color per train id — collected
+  // while drawing each train's own line so the chain-line pass below (which
+  // needs BOTH ends of a pair, potentially from trains processed in either
+  // order, and each end's own color — see operationChainLineSvg) can look
+  // them up after every train has been drawn once.
+  const endpointsByTrainId = new Map();
 
   for (const train of trains) {
     const segments = trainPolylineSegments(train, stations, maxDistanceKm, plotHeight, startHour, hourWidth);
@@ -259,14 +460,100 @@ export function renderDiagram(
 
     const markerColor = resolvedColor || 'var(--color-accent)';
     const firstPoint = segments[0][0];
+    const firstSegment = segments[0];
     const lastSegment = segments[segments.length - 1];
     const lastPoint = lastSegment[lastSegment.length - 1];
+    // "Inner" neighbors — the nearest point on each end whose y actually
+    // differs from the endpoint's (skipping same-station dwell points) —
+    // tell turnbackGeometry which side of the station line each train's
+    // line approaches from, so the turnback cap bulges away from both.
+    let firstInner = null;
+    for (let i = 1; i < firstSegment.length; i++) {
+      if (Math.abs(firstSegment[i][1] - firstPoint[1]) > 0.5) {
+        firstInner = firstSegment[i];
+        break;
+      }
+    }
+    let lastInner = null;
+    for (let i = lastSegment.length - 2; i >= 0; i--) {
+      if (Math.abs(lastSegment[i][1] - lastPoint[1]) > 0.5) {
+        lastInner = lastSegment[i];
+        break;
+      }
+    }
+    endpointsByTrainId.set(train.id, {
+      firstPoint,
+      lastPoint,
+      firstInner,
+      lastInner,
+      color: markerColor,
+      dash: (train.trainType && train.trainType.dashArray) || null,
+      train,
+    });
+
+    if (showTrainNumbers && train.number) {
+      svgParts.push(trainNumberLabelSvg(segments, train.number, markerColor));
+    }
+
     if (train.operation) {
       const { origin, terminal } = train.operation;
-      if (showDepotMarkers && origin && !origin.linked) svgParts.push(depotMarkerSvg(firstPoint, 'origin', markerColor));
-      if (showDepotMarkers && terminal && !terminal.linked) svgParts.push(depotMarkerSvg(lastPoint, 'terminal', markerColor));
-      if (showOperationNumbers && origin && origin.linked && origin.operationNumber) {
-        svgParts.push(operationLabelSvg(firstPoint, origin.operationNumber, markerColor));
+      const hasIncomingChain = !!train.chainPrevTrainId;
+      const hasOutgoingChain = !!train.chainNextTrainId;
+      // 出区/入区(等) marker vs. connecting line: see depotMarkerSvg's doc
+      // comment — a boundary marker is drawn only when no chain partner was
+      // found for that end, independent of the Operation field's own code.
+      if (showDepotMarkers && !hasIncomingChain) svgParts.push(depotMarkerSvg(firstPoint, 'origin', markerColor));
+      if (showDepotMarkers && !hasOutgoingChain) svgParts.push(depotMarkerSvg(lastPoint, 'terminal', markerColor));
+      // 入出庫運番（チェーンなし端点）のみここで描く。折り返し運番
+      // （チェーンあり端点）は下のチェーンパスで弧の頂点にペアごとに
+      // 1つだけ描く（以前は両列車の端点に同じ番号が2回出ていた）。
+      // depot-vs-chain状態そのものは常にhasIncomingChain/hasOutgoingChain
+      // から決まり、トグルはその状態の表示/非表示だけを切り替える
+      // （他方へのフォールバックはしない）。番号自体はチェーン伝播済みの
+      // train.operationNumber（lib/oudParser.jsのpropagateOperationNumbers
+      // 参照——ファイル上は運用の先頭列車にしか記録されないので、入区▽側
+      // は伝播なしではほぼ常に無番号になってしまう）を優先し、端点固有の
+      // 値にフォールバックする。
+      const originNumber = train.operationNumber || (origin && origin.operationNumber);
+      const terminalNumber = train.operationNumber || (terminal && terminal.operationNumber);
+      if (originNumber && !hasIncomingChain && showDepotOperationNumbers) {
+        svgParts.push(operationLabelSvg(firstPoint, originNumber, markerColor, 'left'));
+      }
+      if (terminalNumber && !hasOutgoingChain && showDepotOperationNumbers) {
+        svgParts.push(operationLabelSvg(lastPoint, terminalNumber, markerColor, 'right'));
+      }
+    }
+  }
+
+  // 折り返しのつなぎ（弧）＋折り返し運番: once per matched pair (from the
+  // earlier train's `chainNextTrainId` side only, so a mutual pair isn't
+  // drawn twice) after every train's own endpoints/colors are known. The
+  // two toggles are independent — the number still draws at the arc apex
+  // position even when the arc itself is hidden.
+  if (showChainLines || showTurnbackOperationNumbers) {
+    for (const train of trains) {
+      if (!train.chainNextTrainId) continue;
+      const from = endpointsByTrainId.get(train.id);
+      const to = endpointsByTrainId.get(train.chainNextTrainId);
+      if (!from || !to) continue; // partner train had no drawable points (e.g. filtered elsewhere)
+      const geo = turnbackGeometry(from.lastPoint, from.lastInner, to.firstPoint, to.firstInner);
+      if (showChainLines) {
+        svgParts.push(turnbackArcSvg(geo, from.color, from.dash, to.color, to.dash));
+      }
+      if (showTurnbackOperationNumbers) {
+        // The chain-propagated number (see lib/oudParser.js's
+        // propagateOperationNumbers — the file records the 運用番号 only at
+        // the operation's 出区 head, so mid-chain turnbacks need the
+        // propagated field), with the raw per-endpoint values as fallback
+        // for data that reached us without the propagation pass.
+        const toOp = to.train.operation;
+        const fromOp = from.train.operation;
+        const number =
+          to.train.operationNumber ||
+          from.train.operationNumber ||
+          (toOp && toOp.origin && toOp.origin.operationNumber) ||
+          (fromOp && fromOp.terminal && fromOp.terminal.operationNumber);
+        if (number) svgParts.push(turnbackNumberSvg(geo, number, to.color));
       }
     }
   }

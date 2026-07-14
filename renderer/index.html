@@ -15,7 +15,11 @@
       <button class="tab-button" data-tab="actual">実績</button>
     </nav>
     <div id="file-toolbar">
-      <button id="btn-theme-toggle" type="button" title="ライト/ダークテーマ切り替え">🌙 ダーク</button>
+      <select id="theme-select" title="テーマ切り替え">
+        <option value="dark">🌙 ダーク</option>
+        <option value="light">☀️ ライト</option>
+        <option value="classic">📐 クラシック（OuDia風）</option>
+      </select>
       <span id="current-file-label">（サンプルデータ）</span>
       <button id="btn-file-open" type="button">開く</button>
       <button id="btn-file-save" type="button" disabled>保存</button>
@@ -23,7 +27,6 @@
       <select id="recent-files-select">
         <option value="">最近使ったファイル…</option>
       </select>
-      <button id="btn-oud-import" type="button">OuDia読み込み…</button>
     </div>
   </header>
 
@@ -42,11 +45,18 @@
       <h2>計画（ダイヤ）</h2>
       <p class="panel-note" id="plan-note">サンプルダイヤ（data/sampleDiagram.mjs）を表示しています。</p>
       <div class="diagram-zoom-control">
-        拡大率
-        <input id="plan-zoom" type="range" min="0.3" max="2" step="0.1" value="1" />
-        <span id="plan-zoom-label">100%</span>
+        <span class="diagram-zoom-vertical">
+          縦
+          <button type="button" id="plan-zoom-out" title="縦方向（駅間隔）を縮小">－</button>
+          <span id="plan-zoom-label">100%</span>
+          <button type="button" id="plan-zoom-in" title="縦方向（駅間隔）を拡大">＋</button>
+        </span>
+        <span class="diagram-zoom-hint">横方向はダイヤグラム上でマウスホイール／右ドラッグでパン</span>
         <label><input id="plan-show-depot" type="checkbox" checked /> 入出庫記号</label>
-        <label><input id="plan-show-opnum" type="checkbox" checked /> 運用番号</label>
+        <label><input id="plan-show-chainlink" type="checkbox" checked /> 運用つなぎ</label>
+        <label><input id="plan-show-depot-opnum" type="checkbox" checked /> 入出庫運番</label>
+        <label><input id="plan-show-turnback-opnum" type="checkbox" checked /> 折り返し運番</label>
+        <label><input id="plan-show-trainnum" type="checkbox" checked /> 列車番号</label>
       </div>
       <div id="plan-diagram" class="diagram-container"></div>
       <div class="stop-table-scroll"><table id="plan-table" class="stop-table"></table></div>
@@ -72,11 +82,18 @@
         <button type="button" id="dispatch-reset">リセット</button>
       </form>
       <div class="diagram-zoom-control">
-        拡大率
-        <input id="dispatch-zoom" type="range" min="0.3" max="2" step="0.1" value="1" />
-        <span id="dispatch-zoom-label">100%</span>
+        <span class="diagram-zoom-vertical">
+          縦
+          <button type="button" id="dispatch-zoom-out" title="縦方向（駅間隔）を縮小">－</button>
+          <span id="dispatch-zoom-label">100%</span>
+          <button type="button" id="dispatch-zoom-in" title="縦方向（駅間隔）を拡大">＋</button>
+        </span>
+        <span class="diagram-zoom-hint">横方向はダイヤグラム上でマウスホイール／右ドラッグでパン</span>
         <label><input id="dispatch-show-depot" type="checkbox" checked /> 入出庫記号</label>
-        <label><input id="dispatch-show-opnum" type="checkbox" checked /> 運用番号</label>
+        <label><input id="dispatch-show-chainlink" type="checkbox" checked /> 運用つなぎ</label>
+        <label><input id="dispatch-show-depot-opnum" type="checkbox" checked /> 入出庫運番</label>
+        <label><input id="dispatch-show-turnback-opnum" type="checkbox" checked /> 折り返し運番</label>
+        <label><input id="dispatch-show-trainnum" type="checkbox" checked /> 列車番号</label>
       </div>
       <div id="dispatch-diagram" class="diagram-container"></div>
       <div class="stop-table-scroll"><table id="dispatch-table" class="stop-table"></table></div>
@@ -84,8 +101,12 @@
 
     <section id="tab-actual" class="tab-panel">
       <h2>実績</h2>
-      <p class="panel-note">計画時刻に対する実際の着発時刻を入力すると、差分（秒）を計算します。ファイル保存時に運転整理の適用状態とあわせて.tlineファイルに保存されます。</p>
+      <p class="panel-note">実績は入力がない駅では計画どおり（実績＝計画）として扱います。実際と違った駅にだけ着発時刻を入力すると差分（秒）を計算し、自動補完がONならその列車の以降の駅にも同じ遅延を反映します（手入力したセルは上書きしません）。実績は運転日ごとに分けて.tlineファイルに保存されます。</p>
       <form class="dispatch-form" id="actual-compare-form">
+        <label>
+          運転日
+          <input type="date" id="actual-date" />
+        </label>
         <label>
           比較対象
           <select id="actual-compare-target">
@@ -93,6 +114,7 @@
             <option value="dispatch">運転整理後</option>
           </select>
         </label>
+        <label><input type="checkbox" id="actual-autocomplete" checked /> 遅延の自動補完（入力駅以降へ反映）</label>
       </form>
       <p class="panel-note" id="actual-compare-note"></p>
       <div class="stop-table-scroll"><table id="actual-table" class="stop-table"></table></div>

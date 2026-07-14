@@ -1,7 +1,15 @@
 import { sampleDiagram } from '../data/sampleDiagram.mjs';
-import { renderDiagram } from './diagramView.mjs';
+import { renderDiagram, MARGIN } from './diagramView.mjs';
 import { applyDelay } from './dispatch.mjs';
-import { parseTime } from './timeUtils.mjs';
+import { parseTime, shiftTime } from './timeUtils.mjs';
+
+// ローカルタイムゾーンでの今日の日付（YYYY-MM-DD）。<input type="date">の
+// value形式に合わせる。toISOString()はUTC基準で日本の早朝に前日へずれる
+// ため使わない。
+function todayDateString() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
 
 const state = {
   diagram: sampleDiagram, // 計画。ファイルを開くとその内容に差し替わる（state.currentFilePath参照）
@@ -11,13 +19,30 @@ const state = {
   dispatchStationId: sampleDiagram.trains[0]?.stops[0]?.stationId ?? null,
   dispatchDelta: 90,
   adjustedTrain: null, // set once 適用 is pressed; cleared by リセット
-  actualByTrainStation: new Map(), // `${trainId}:${stationId}` -> { arrival, departure }
+  // 実績は運転日ごとに独立したマップで持つ（issue #5、2026-07-15）:
+  // 日付文字列(YYYY-MM-DD) -> Map(`${trainId}:${stationId}` ->
+  // { arrival, departure, manualArrival?, manualDeparture? })。
+  // manual*フラグは「ユーザーが手入力した」印——遅延の自動補完
+  // （propagateActualDelay）は手入力セルを上書きしない（自動補完で埋めた
+  // セルはフラグなし＝後からの再補完で更新される）。
+  actualByDate: new Map(),
+  actualDate: todayDateString(), // 実績タブで表示・編集中の運転日
+  actualAutoComplete: true, // 入力駅以降へ同じ遅延を自動反映するか（issue #5）
   actualCompareTarget: 'plan', // 'plan' | 'dispatch' — 実績タブで何と差分を取るか（issue #7）
   pendingOudImport: null, // { filePath, lineName } while the Dia picker is shown; null otherwise
-  diagramZoom: 1, // 計画・運転整理タブ共通のダイヤグラム拡大率（issue #8）
-  theme: localStorage.getItem('tline-theme') === 'light' ? 'light' : 'dark', // ライト/ダークテーマ切り替え
-  showDepotMarkers: true, // 入出庫記号（○出区／▽入区）の表示切り替え。統計的推定のためデフォルトON+トグルで対応（NOTES.md「運用番号・入出庫の解読」）
-  showOperationNumbers: true, // 運用番号ラベルの表示切り替え（同上）
+  diagramZoomY: 1, // 縦方向（駅間隔）のズーム。ヘッダー横のボタンで変更（2026-07-14、専用ボタン化）
+  diagramZoomX: 1, // マウスホイールによる横方向（時間軸）のみのズーム。縦はdiagramZoomYのみに従う（下記setupDiagramPanZoom参照）
+  theme: ['light', 'classic'].includes(localStorage.getItem('tline-theme')) ? localStorage.getItem('tline-theme') : 'dark', // ダーク/ライト/クラシック（issue #8）
+  // 入出庫・運用関連の5トグル（2026-07-14、issue #10）。元は「入出庫記号」
+  // 「運用番号」の2つだったが、①運用のつなぎ線は入出庫記号と独立にON/OFF
+  // したい、②運用番号ラベルは「入出庫（チェーンなし端点）」と「折り返し
+  // （チェーンあり端点）」で意味が違うので分けたい、③新設の列車番号表示も
+  // 独立トグルにしたい、という要望で5つに分割した。
+  showDepotMarkers: true, // 入出庫記号（○出区／▽入区）
+  showChainLines: true, // 運用のつなぎ線（列車間の折り返し接続、lib/oudParser.jsのinferOperationChains）
+  showDepotOperationNumbers: true, // 入出庫運番（チェーンが見つからなかった端点の運用番号ラベル）
+  showTurnbackOperationNumbers: true, // 折り返し運番（チェーンが見つかった端点の運用番号ラベル）
+  showTrainNumbers: true, // 列車番号ラベル
 };
 
 const el = {
@@ -33,24 +58,33 @@ const el = {
   dispatchReset: document.getElementById('dispatch-reset'),
   dispatchDiagram: document.getElementById('dispatch-diagram'),
   dispatchTable: document.getElementById('dispatch-table'),
-  planZoom: document.getElementById('plan-zoom'),
+  planZoomIn: document.getElementById('plan-zoom-in'),
+  planZoomOut: document.getElementById('plan-zoom-out'),
   planZoomLabel: document.getElementById('plan-zoom-label'),
-  dispatchZoom: document.getElementById('dispatch-zoom'),
+  dispatchZoomIn: document.getElementById('dispatch-zoom-in'),
+  dispatchZoomOut: document.getElementById('dispatch-zoom-out'),
   dispatchZoomLabel: document.getElementById('dispatch-zoom-label'),
-  btnThemeToggle: document.getElementById('btn-theme-toggle'),
+  themeSelect: document.getElementById('theme-select'),
   planShowDepot: document.getElementById('plan-show-depot'),
-  planShowOpnum: document.getElementById('plan-show-opnum'),
+  planShowChainLink: document.getElementById('plan-show-chainlink'),
+  planShowDepotOpnum: document.getElementById('plan-show-depot-opnum'),
+  planShowTurnbackOpnum: document.getElementById('plan-show-turnback-opnum'),
+  planShowTrainNum: document.getElementById('plan-show-trainnum'),
   dispatchShowDepot: document.getElementById('dispatch-show-depot'),
-  dispatchShowOpnum: document.getElementById('dispatch-show-opnum'),
+  dispatchShowChainLink: document.getElementById('dispatch-show-chainlink'),
+  dispatchShowDepotOpnum: document.getElementById('dispatch-show-depot-opnum'),
+  dispatchShowTurnbackOpnum: document.getElementById('dispatch-show-turnback-opnum'),
+  dispatchShowTrainNum: document.getElementById('dispatch-show-trainnum'),
   actualTable: document.getElementById('actual-table'),
   actualCompareTarget: document.getElementById('actual-compare-target'),
   actualCompareNote: document.getElementById('actual-compare-note'),
+  actualDate: document.getElementById('actual-date'),
+  actualAutoComplete: document.getElementById('actual-autocomplete'),
   currentFileLabel: document.getElementById('current-file-label'),
   btnFileOpen: document.getElementById('btn-file-open'),
   btnFileSave: document.getElementById('btn-file-save'),
   btnFileSaveAs: document.getElementById('btn-file-save-as'),
   recentFilesSelect: document.getElementById('recent-files-select'),
-  btnOudImport: document.getElementById('btn-oud-import'),
   oudImportPanel: document.getElementById('oud-import-panel'),
   oudImportLabel: document.getElementById('oud-import-label'),
   oudDiaSelect: document.getElementById('oud-dia-select'),
@@ -69,32 +103,67 @@ for (const button of el.tabButtons) {
 
 // ---------- 計画 ----------
 
+// タイムテーブルの1マス（駅×列車）のHTML。2026-07-14の要望「発車時刻も
+// 着時刻も縦で２ますつかうように」「番線表示も」「oud/oud2に主要駅/一般駅
+// の設定が参照できるなら、主要駅は発車・着・番線の3マス、一般駅は発車時刻
+// の1マスに」を反映。`station.scale`（lib/oudParser.jsのparseEkikibo、
+// `.oud`/`.oud2`の`Ekikibo`プロパティ由来。手作成の計画データ等、由来がな
+// ければ`undefined`）で3通りに分岐する:
+//   'major'   — 主要駅: 着/発/番線の3マス（縦積み）
+//   'general' — 一般駅: 発車時刻のみ1マス（発が無い列車の終着駅では着で代用）
+//   それ以外  — 区分不明: 着/発の2マス（縦積み、区分ができるようになる前の
+//               基本仕様。手作成の計画データはこちらに常に該当する）
+function stopCellHtml(stop, station) {
+  if (!stop) return '<td class="stop-cell">—</td>';
+  const arr = stop.arrival ?? '';
+  const dep = stop.departure ?? '';
+
+  if (station.scale === 'general') {
+    // 一般駅は停車時分が短い前提で発車時刻のみ。終着駅（発が無い）は着で代用。
+    return `<td class="stop-cell stop-cell--general">${dep || arr}</td>`;
+  }
+  if (station.scale === 'major') {
+    const track = stop.track != null ? `${stop.track}番線` : '';
+    return (
+      `<td class="stop-cell stop-cell--major">` +
+      `<div class="stop-cell-row stop-cell-row--arr">${arr}</div>` +
+      `<div class="stop-cell-row stop-cell-row--dep">${dep}</div>` +
+      `<div class="stop-cell-row stop-cell-row--track">${track}</div>` +
+      `</td>`
+    );
+  }
+  return (
+    `<td class="stop-cell stop-cell--basic">` +
+    `<div class="stop-cell-row stop-cell-row--arr">${arr}</div>` +
+    `<div class="stop-cell-row stop-cell-row--dep">${dep}</div>` +
+    `</td>`
+  );
+}
+
 function stopTableHtml(diagram, { trainOverride } = {}) {
   const trains = trainOverride ? diagram.trains.map((t) => (t.id === trainOverride.id ? trainOverride : t)) : diagram.trains;
-  const header = `<tr><th>駅</th>${trains.map((t) => `<th>${t.number}</th>`).join('')}</tr>`;
+  const header = `<thead><tr><th>駅</th>${trains.map((t) => `<th>${t.number}</th>`).join('')}</tr></thead>`;
   const rows = diagram.line.stations
     .map((station) => {
       const cells = trains
-        .map((t) => {
-          const stop = t.stops.find((s) => s.stationId === station.id);
-          if (!stop) return '<td>—</td>';
-          const arr = stop.arrival ?? '';
-          const dep = stop.departure ?? '';
-          return `<td>${[arr, dep].filter(Boolean).join(' / ')}</td>`;
-        })
+        .map((t) => stopCellHtml(t.stops.find((s) => s.stationId === station.id), station))
         .join('');
       return `<tr><th>${station.name}</th>${cells}</tr>`;
     })
     .join('');
-  return header + rows;
+  return header + `<tbody>${rows}</tbody>`;
 }
 
 function diagramDisplayOptions() {
   return {
-    zoom: state.diagramZoom,
+    zoomY: state.diagramZoomY,
+    zoomX: state.diagramZoomX,
     theme: state.theme,
     showDepotMarkers: state.showDepotMarkers,
-    showOperationNumbers: state.showOperationNumbers,
+    showChainLines: state.showChainLines,
+    showDepotOperationNumbers: state.showDepotOperationNumbers,
+    showTurnbackOperationNumbers: state.showTurnbackOperationNumbers,
+    showTrainNumbers: state.showTrainNumbers,
   };
 }
 
@@ -103,56 +172,148 @@ function renderPlanTab() {
   el.planTable.innerHTML = stopTableHtml(state.diagram);
 }
 
-// ---------- ダイヤグラムの表示設定（拡大率・テーマ・入出庫記号・運用番号、計画・運転整理タブ共通） ----------
+// ---------- ダイヤグラムの表示設定（拡大率・テーマ・入出庫/運用系5トグル、計画・運転整理タブ共通） ----------
 //
 // issue #8（拡大縮小・テーマ）、参考画像Diagram/image/06123.png（入出庫記号・
-// 運用番号）参照。入出庫記号・運用番号は`lib/oudParser.js`のOperationプロパ
-// ティ解読が公式仕様の裏付けなし・統計的推定であるため、デフォルトONに
-// しつつ簡単にOFFにできるようトグルを用意している（NOTES.md参照）。
+// 運用番号）参照。入出庫記号・運用つなぎ線・運用番号（入出庫/折り返し）・
+// 列車番号は`lib/oudParser.js`のOperationプロパティ解読／inferOperationChains
+// が公式仕様の裏付けなし・統計的推定/ヒューリスティックであるため、デフォ
+// ルトONにしつつ簡単にOFFにできるようトグルを用意している（NOTES.md参照）。
 
 function updateDiagramControls() {
-  const zoomLabel = `${Math.round(state.diagramZoom * 100)}%`;
-  el.planZoom.value = state.diagramZoom;
+  const zoomLabel = `${Math.round(state.diagramZoomY * 100)}%`;
   el.planZoomLabel.textContent = zoomLabel;
-  el.dispatchZoom.value = state.diagramZoom;
   el.dispatchZoomLabel.textContent = zoomLabel;
   el.planShowDepot.checked = state.showDepotMarkers;
   el.dispatchShowDepot.checked = state.showDepotMarkers;
-  el.planShowOpnum.checked = state.showOperationNumbers;
-  el.dispatchShowOpnum.checked = state.showOperationNumbers;
-  el.btnThemeToggle.textContent = state.theme === 'light' ? '☀️ ライト' : '🌙 ダーク';
+  el.planShowChainLink.checked = state.showChainLines;
+  el.dispatchShowChainLink.checked = state.showChainLines;
+  el.planShowDepotOpnum.checked = state.showDepotOperationNumbers;
+  el.dispatchShowDepotOpnum.checked = state.showDepotOperationNumbers;
+  el.planShowTurnbackOpnum.checked = state.showTurnbackOperationNumbers;
+  el.dispatchShowTurnbackOpnum.checked = state.showTurnbackOperationNumbers;
+  el.planShowTrainNum.checked = state.showTrainNumbers;
+  el.dispatchShowTrainNum.checked = state.showTrainNumbers;
+  el.themeSelect.value = state.theme;
 }
 
-function setDiagramZoom(value) {
-  state.diagramZoom = Number(value) || 1;
+// 縦方向（駅間隔）ズームは専用の＋/－ボタンで変更する（2026-07-14、
+// スライダーから変更——横方向はダイヤグラム上のホイール操作に一本化した
+// ため、スライダーが縦横どちらを動かしているのか分かりにくかった）。
+const ZOOM_Y_MIN = 0.3;
+const ZOOM_Y_MAX = 4;
+const ZOOM_Y_STEP = 1.15; // ボタン1クリックあたりの倍率
+
+function stepDiagramZoomY(factor) {
+  state.diagramZoomY = Math.min(ZOOM_Y_MAX, Math.max(ZOOM_Y_MIN, state.diagramZoomY * factor));
   updateDiagramControls();
   renderPlanTab();
   renderDispatchTab();
 }
 
-el.planZoom.addEventListener('input', () => setDiagramZoom(el.planZoom.value));
-el.dispatchZoom.addEventListener('input', () => setDiagramZoom(el.dispatchZoom.value));
+el.planZoomIn.addEventListener('click', () => stepDiagramZoomY(ZOOM_Y_STEP));
+el.planZoomOut.addEventListener('click', () => stepDiagramZoomY(1 / ZOOM_Y_STEP));
+el.dispatchZoomIn.addEventListener('click', () => stepDiagramZoomY(ZOOM_Y_STEP));
+el.dispatchZoomOut.addEventListener('click', () => stepDiagramZoomY(1 / ZOOM_Y_STEP));
 
-function setShowDepotMarkers(checked) {
-  state.showDepotMarkers = checked;
-  updateDiagramControls();
-  renderPlanTab();
-  renderDispatchTab();
+// ---------- ダイヤグラムのドラッグ操作（右クリック長押しでパン）・ホイール操作（横方向のみズーム） ----------
+//
+// OuDiaSecondや一般的な地図/図面ビューアの操作感を参考にした便利機能:
+// 右ボタンを押したままドラッグでスクロール（左クリックは将来の選択操作用に
+// 空けておく）、マウスホイールは縦（駅間隔）を変えず横（時間軸）だけを
+// ズームする（diagramView.mjsのrenderDiagramの`zoomX`引数）。カーソル位置の
+// 時刻がズーム後も画面上の同じ位置に留まるよう、スクロール位置を補正する
+// （地図アプリ等でおなじみの「カーソル位置を中心にズーム」の挙動）。
+const ZOOM_X_MIN = 0.3;
+const ZOOM_X_MAX = 6;
+const ZOOM_X_STEP = 1.12; // ホイール1ノッチあたりの倍率
+
+function setupDiagramPanZoom(container) {
+  let dragging = false;
+  let dragStartX = 0;
+  let dragStartY = 0;
+  let dragStartScrollLeft = 0;
+  let dragStartScrollTop = 0;
+
+  // 右クリックでの独自パン操作を割り当てているため、既定のコンテキスト
+  // メニューは常に抑止する。
+  container.addEventListener('contextmenu', (e) => e.preventDefault());
+
+  container.addEventListener('mousedown', (e) => {
+    if (e.button !== 2) return; // 右ボタンのみ
+    dragging = true;
+    dragStartX = e.clientX;
+    dragStartY = e.clientY;
+    dragStartScrollLeft = container.scrollLeft;
+    dragStartScrollTop = container.scrollTop;
+    container.classList.add('diagram-container--dragging');
+    e.preventDefault();
+  });
+
+  window.addEventListener('mousemove', (e) => {
+    if (!dragging) return;
+    container.scrollLeft = dragStartScrollLeft - (e.clientX - dragStartX);
+    container.scrollTop = dragStartScrollTop - (e.clientY - dragStartY);
+  });
+
+  window.addEventListener('mouseup', (e) => {
+    if (e.button !== 2 || !dragging) return;
+    dragging = false;
+    container.classList.remove('diagram-container--dragging');
+  });
+
+  container.addEventListener(
+    'wheel',
+    (e) => {
+      e.preventDefault();
+      const oldZoomX = state.diagramZoomX;
+      const newZoomX = Math.min(ZOOM_X_MAX, Math.max(ZOOM_X_MIN, oldZoomX * (e.deltaY < 0 ? ZOOM_X_STEP : 1 / ZOOM_X_STEP)));
+      if (newZoomX === oldZoomX) return;
+
+      // カーソル位置のコンテンツ座標（SVG内のx、MARGIN.left起点）を求め、
+      // ズーム後にその座標が再び同じ画面位置に来るようスクロール位置を
+      // 合わせる。MARGIN.leftはズームしても動かない固定オフセットなので、
+      // 「MARGIN.leftからの距離」だけを比率でスケールする。
+      const rect = container.getBoundingClientRect();
+      const cursorClientX = e.clientX - rect.left;
+      const cursorContentX = container.scrollLeft + cursorClientX;
+      const ratio = newZoomX / oldZoomX;
+      const newCursorContentX = MARGIN.left + (cursorContentX - MARGIN.left) * ratio;
+
+      state.diagramZoomX = newZoomX;
+      renderPlanTab();
+      renderDispatchTab();
+
+      container.scrollLeft = newCursorContentX - cursorClientX;
+    },
+    { passive: false }
+  );
 }
-el.planShowDepot.addEventListener('change', () => setShowDepotMarkers(el.planShowDepot.checked));
-el.dispatchShowDepot.addEventListener('change', () => setShowDepotMarkers(el.dispatchShowDepot.checked));
 
-function setShowOperationNumbers(checked) {
-  state.showOperationNumbers = checked;
-  updateDiagramControls();
-  renderPlanTab();
-  renderDispatchTab();
+setupDiagramPanZoom(el.planDiagram);
+setupDiagramPanZoom(el.dispatchDiagram);
+
+// 入出庫・運用系5トグルの共通ハンドラ生成。それぞれ独立に効くので、まとめて
+// 1つの関数で作る（issue #10、2026-07-14の5分割）。
+function bindDiagramToggle(stateKey, planEl, dispatchEl) {
+  const apply = (checked) => {
+    state[stateKey] = checked;
+    updateDiagramControls();
+    renderPlanTab();
+    renderDispatchTab();
+  };
+  planEl.addEventListener('change', () => apply(planEl.checked));
+  dispatchEl.addEventListener('change', () => apply(dispatchEl.checked));
 }
-el.planShowOpnum.addEventListener('change', () => setShowOperationNumbers(el.planShowOpnum.checked));
-el.dispatchShowOpnum.addEventListener('change', () => setShowOperationNumbers(el.dispatchShowOpnum.checked));
 
-el.btnThemeToggle.addEventListener('click', () => {
-  state.theme = state.theme === 'light' ? 'dark' : 'light';
+bindDiagramToggle('showDepotMarkers', el.planShowDepot, el.dispatchShowDepot);
+bindDiagramToggle('showChainLines', el.planShowChainLink, el.dispatchShowChainLink);
+bindDiagramToggle('showDepotOperationNumbers', el.planShowDepotOpnum, el.dispatchShowDepotOpnum);
+bindDiagramToggle('showTurnbackOperationNumbers', el.planShowTurnbackOpnum, el.dispatchShowTurnbackOpnum);
+bindDiagramToggle('showTrainNumbers', el.planShowTrainNum, el.dispatchShowTrainNum);
+
+el.themeSelect.addEventListener('change', () => {
+  state.theme = el.themeSelect.value;
   localStorage.setItem('tline-theme', state.theme);
   document.documentElement.dataset.theme = state.theme;
   updateDiagramControls();
@@ -227,35 +388,90 @@ function deltaSeconds(planned, actual) {
   return a - p;
 }
 
-function actualTableHtml() {
+// 表示・編集中の運転日の実績マップ（なければ作る）。日付ごとに完全に独立
+// したMap——別の日を選ぶと空の（またはその日に保存済みの）実績になる。
+function actualMapForCurrentDate() {
+  let map = state.actualByDate.get(state.actualDate);
+  if (!map) {
+    map = new Map();
+    state.actualByDate.set(state.actualDate, map);
+  }
+  return map;
+}
+
+// 実績タブの差分基準（比較対象セレクタに追随）: 「運転整理後」比較時、
+// state.adjustedTrainは常に1列車分しか保持していない（運転整理タブのv1
+// 仕様）ため、選択中の列車だけ整理後時刻、他は計画時刻のまま。
+function actualBaselineFor(train) {
   const compareToDispatch = state.actualCompareTarget === 'dispatch';
-  const baseLabel = compareToDispatch ? '整理後' : '計画';
-  const header = `<tr><th>列車</th><th>駅</th><th>${baseLabel}着</th><th>実績着</th><th>差</th><th>${baseLabel}発</th><th>実績発</th><th>差</th></tr>`;
+  return compareToDispatch && state.adjustedTrain && state.adjustedTrain.id === train.id ? state.adjustedTrain : train;
+}
+
+// 遅延の自動補完（issue #5の方針「実績ダイヤ＝計画ダイヤにいったんする。
+// A駅で+2分なら、その列車のその後のダイヤも+2分にする」）: 編集された
+// セルの実績と基準時刻の差（遅延秒）を、同じ列車の「その停車の以降」の
+// 全セル（着・発とも、着を編集した場合は同駅の発も含む）に基準時刻+遅延で
+// 埋める。手入力済み（manual*フラグあり）のセルだけは訂正値として尊重し
+// 上書きしない——自動補完で埋まったセル（フラグなし）は、後からより手前の
+// 駅で遅延が訂正されたときに再補完で更新される。
+function propagateActualDelay(train, baselineStops, stopIndex, field, map) {
+  const editedStop = baselineStops[stopIndex];
+  const editedKey = `${train.id}:${editedStop.stationId}`;
+  const editedEntry = map.get(editedKey);
+  const base = parseTime(editedStop[field]);
+  const actual = parseTime(editedEntry ? editedEntry[field] : null);
+  if (base == null || actual == null) return;
+  const delta = actual - base;
+  for (let i = stopIndex; i < baselineStops.length; i++) {
+    const stop = baselineStops[i];
+    const key = `${train.id}:${stop.stationId}`;
+    const entry = map.get(key) || {};
+    for (const f of ['arrival', 'departure']) {
+      if (i === stopIndex && (f === field || (field === 'departure' && f === 'arrival'))) continue; // 編集セル自身と、発編集時のもう過ぎた着はそのまま
+      if (stop[f] == null) continue;
+      const manualFlag = f === 'arrival' ? 'manualArrival' : 'manualDeparture';
+      if (entry[manualFlag]) continue;
+      entry[f] = shiftTime(stop[f], delta);
+    }
+    if (entry.arrival != null || entry.departure != null) map.set(key, entry);
+  }
+}
+
+function actualTableHtml() {
+  const baseLabel = state.actualCompareTarget === 'dispatch' ? '整理後' : '計画';
+  const header = `<thead><tr><th>列車</th><th>駅</th><th>${baseLabel}着</th><th>実績着</th><th>差</th><th>${baseLabel}発</th><th>実績発</th><th>差</th></tr></thead>`;
   const rows = [];
+  const actualMap = actualMapForCurrentDate();
   for (const train of state.diagram.trains) {
-    // 「運転整理後」比較時、state.adjustedTrainは常に1列車分しか保持していない
-    // （運転整理タブのv1仕様）ため、選択中の列車だけ整理後時刻、他は計画時刻のまま。
-    const baseline = compareToDispatch && state.adjustedTrain && state.adjustedTrain.id === train.id ? state.adjustedTrain : train;
-    for (const stop of baseline.stops) {
+    const baseline = actualBaselineFor(train);
+    baseline.stops.forEach((stop, stopIndex) => {
       const station = state.diagram.line.stations.find((s) => s.id === stop.stationId);
       const key = `${train.id}:${stop.stationId}`;
-      const actual = state.actualByTrainStation.get(key) || {};
+      const actual = actualMap.get(key) || {};
       const arrDelta = deltaSeconds(stop.arrival, actual.arrival);
       const depDelta = deltaSeconds(stop.departure, actual.departure);
+      // 未入力セルは「実績＝計画（基準）どおり」の扱い（issue #5）——空欄の
+      // ままにし、基準時刻をplaceholderでうっすら見せる。自動補完で埋まった
+      // セル（値ありmanualフラグなし）は--autoクラスで手入力と見分ける。
+      const inputHtml = (field, value, manual, baseTime) => {
+        if (baseTime == null) return '—';
+        const cls = value != null && !manual ? ' class="actual-input--auto" title="自動補完された値（手入力で訂正できます）"' : '';
+        return `<input data-train-id="${train.id}" data-stop-index="${stopIndex}" data-field="${field}" value="${value ?? ''}" placeholder="${baseTime}"${cls} />`;
+      };
       rows.push(`
         <tr>
           <th>${train.number}</th>
           <th>${station ? station.name : stop.stationId}</th>
           <td>${stop.arrival ?? '—'}</td>
-          <td>${stop.arrival != null ? `<input data-key="${key}" data-field="arrival" value="${actual.arrival ?? ''}" placeholder="HH:MM:SS" />` : '—'}</td>
+          <td>${inputHtml('arrival', actual.arrival, actual.manualArrival, stop.arrival)}</td>
           <td class="${deltaClass(arrDelta)}">${formatDelta(arrDelta)}</td>
           <td>${stop.departure ?? '—'}</td>
-          <td>${stop.departure != null ? `<input data-key="${key}" data-field="departure" value="${actual.departure ?? ''}" placeholder="HH:MM:SS" />` : '—'}</td>
+          <td>${inputHtml('departure', actual.departure, actual.manualDeparture, stop.departure)}</td>
           <td class="${deltaClass(depDelta)}">${formatDelta(depDelta)}</td>
         </tr>`);
-    }
+    });
   }
-  return header + rows.join('');
+  return header + `<tbody>${rows.join('')}</tbody>`;
 }
 
 function formatDelta(seconds) {
@@ -276,16 +492,35 @@ function actualCompareNoteText() {
 }
 
 function renderActualTab() {
+  el.actualDate.value = state.actualDate;
+  el.actualAutoComplete.checked = state.actualAutoComplete;
   el.actualCompareTarget.value = state.actualCompareTarget;
   el.actualCompareNote.textContent = actualCompareNoteText();
   el.actualTable.innerHTML = actualTableHtml();
   el.actualTable.querySelectorAll('input').forEach((input) => {
     input.addEventListener('change', () => {
-      const key = input.dataset.key;
+      const trainId = input.dataset.trainId;
+      const stopIndex = Number(input.dataset.stopIndex);
       const field = input.dataset.field;
-      const entry = state.actualByTrainStation.get(key) || {};
-      entry[field] = input.value.trim() || null;
-      state.actualByTrainStation.set(key, entry);
+      const train = state.diagram.trains.find((t) => t.id === trainId);
+      if (!train) return;
+      const baseline = actualBaselineFor(train);
+      const stop = baseline.stops[stopIndex];
+      if (!stop) return;
+      const map = actualMapForCurrentDate();
+      const key = `${trainId}:${stop.stationId}`;
+      const entry = map.get(key) || {};
+      const value = input.value.trim() || null;
+      const manualFlag = field === 'arrival' ? 'manualArrival' : 'manualDeparture';
+      entry[field] = value;
+      // 手入力の印。空欄に戻したらフラグも消す（＝再び自動補完の対象になる）。
+      if (value != null) entry[manualFlag] = true;
+      else delete entry[manualFlag];
+      if (entry.arrival == null && entry.departure == null) map.delete(key);
+      else map.set(key, entry);
+      if (value != null && state.actualAutoComplete) {
+        propagateActualDelay(train, baseline.stops, stopIndex, field, map);
+      }
       renderActualTab(); // re-render to recompute the delta column; loses focus, acceptable for this skeleton
     });
   });
@@ -296,14 +531,25 @@ el.actualCompareTarget.addEventListener('change', () => {
   renderActualTab();
 });
 
+el.actualDate.addEventListener('change', () => {
+  state.actualDate = el.actualDate.value || todayDateString();
+  renderActualTab();
+});
+
+el.actualAutoComplete.addEventListener('change', () => {
+  state.actualAutoComplete = el.actualAutoComplete.checked;
+});
+
 // ---------- ファイル操作（開く・保存・最近使ったファイル） ----------
 //
 // 独自の .tline 形式（計画データの line/trains をそのまま
 // JSON化したもの）の開く・保存に加え、.oud/.oud2（OuDia/OuDiaSecond）
 // からのインポートに対応（lib/oudParser.js、下記「.oud/.oud2インポート」
-// 参照）。インポートしたダイヤは.tlineファイルとして開いたものでは
-// ないため、取り込み後はcurrentFilePathをnull（サンプルデータと同様の
-// 「未保存」扱い）にする——保存するには「名前を付けて保存」が必要。
+// 参照）。「開く」ボタンは拡張子を見てtline/oudどちらのフローにも分岐する
+// （元は別ボタンだったが、ユーザーからのフィードバックで統合）。インポート
+// したダイヤは.tlineファイルとして開いたものではないため、取り込み後は
+// currentFilePathをnull（サンプルデータと同様の「未保存」扱い）にする——
+// 保存するには「名前を付けて保存」が必要。
 
 function isValidDiagram(d) {
   return !!d && !!d.line && Array.isArray(d.line.stations) && Array.isArray(d.trains);
@@ -329,7 +575,7 @@ function updateFileLabel() {
 
 // 開いたファイル・新規保存後・.oudインポート後、いずれもここを通って画面
 // 全体を更新する。運転整理・実績のその場限りの作業状態
-// （adjustedTrain/actualByTrainStation）は新しいダイヤに対しては意味を
+// （adjustedTrain/actualByDate）は新しいダイヤに対しては意味を
 // 持たないためリセットする。
 // `description` は.oudインポートなどcurrentFilePathを持たない取り込みで、
 // 「サンプルデータ」表示と区別するためのラベル（例:「碧洛電車.oud2 / 通常」）。
@@ -344,7 +590,8 @@ function loadDiagram(diagram, filePath, description) {
   state.dispatchTrainId = diagram.trains[0]?.id ?? null;
   state.dispatchStationId = diagram.trains[0]?.stops?.[0]?.stationId ?? null;
   state.adjustedTrain = null;
-  state.actualByTrainStation = new Map();
+  state.actualByDate = new Map();
+  state.actualDate = todayDateString();
   state.actualCompareTarget = 'plan';
 
   updateFileLabel();
@@ -360,16 +607,23 @@ function loadDiagram(diagram, filePath, description) {
 // そのまま開ける後方互換を維持する。
 // - dispatch: 運転整理タブの最後の適用状態（v1同様、保持できるのは1列車分のみ）
 //   { trainId, fromStationId, deltaSeconds }
-// - actual: 実績タブの入力値。MapはJSON化できないのでObjectにして保存し、
-//   読み込み時にMapへ戻す。 { "trainId:stationId": { arrival, departure } }
+// - actualByDate: 実績タブの入力値を運転日ごとに保持（issue #5、2026-07-15
+//   に旧`actual`キーから移行）。MapはJSON化できないのでObjectにして保存し、
+//   読み込み時にMapへ戻す。
+//   { "YYYY-MM-DD": { "trainId:stationId": { arrival, departure, manualArrival?, manualDeparture? } } }
+//   旧形式（日付なしの`actual`キー）は読み込みのみ後方互換で対応
+//   （restoreOpsExtras参照）、保存は常に新形式で行う。
 function buildSavePayload() {
   const payload = { line: state.diagram.line, trains: state.diagram.trains };
   if (state.adjustedTrain) {
     payload.dispatch = { trainId: state.dispatchTrainId, fromStationId: state.dispatchStationId, deltaSeconds: state.dispatchDelta };
   }
-  if (state.actualByTrainStation.size > 0) {
-    payload.actual = Object.fromEntries(state.actualByTrainStation);
+  const actualByDate = {};
+  for (const [date, map] of state.actualByDate) {
+    if (map.size === 0) continue; // 表示しただけで何も入力しなかった日は保存しない
+    actualByDate[date] = Object.fromEntries(map);
   }
+  if (Object.keys(actualByDate).length > 0) payload.actualByDate = actualByDate;
   return payload;
 }
 
@@ -388,21 +642,47 @@ function restoreOpsExtras(loaded) {
       renderDispatchTab();
     }
   }
-  if (loaded.actual) {
-    state.actualByTrainStation = new Map(Object.entries(loaded.actual));
+  if (loaded.actualByDate) {
+    state.actualByDate = new Map(
+      Object.entries(loaded.actualByDate).map(([date, entries]) => [date, new Map(Object.entries(entries))])
+    );
+    // 保存されている実績のうち最新の運転日を初期表示にする（今日の日付の
+    // ままだと、過去日の実績を保存したファイルを開いても空に見えるため）。
+    const dates = [...state.actualByDate.keys()].sort();
+    if (dates.length > 0) state.actualDate = dates[dates.length - 1];
+  } else if (loaded.actual) {
+    // 旧形式（日付なし）: 編集中の運転日（今日）の実績として読み込む。
+    // 旧データは全て手入力だったので、自動補完に上書きされないよう
+    // manual*フラグを付けて取り込む。
+    const entries = Object.entries(loaded.actual).map(([key, e]) => [
+      key,
+      { ...e, ...(e.arrival != null ? { manualArrival: true } : {}), ...(e.departure != null ? { manualDeparture: true } : {}) },
+    ]);
+    state.actualByDate = new Map([[state.actualDate, new Map(entries)]]);
   }
   renderActualTab();
 }
 
+// 最近使ったファイルの一覧をpath->entryで保持（.oud/.oud2再選択時にkindで
+// 開き方を分岐するため、<option>のvalue=pathからentryを引けるようにする）。
+let recentFilesByPath = new Map();
+
 async function refreshRecentFiles() {
   const list = await window.tline.getRecentFiles();
+  recentFilesByPath = new Map(list.map((e) => [e.path, e]));
   el.recentFilesSelect.innerHTML =
     '<option value="">最近使ったファイル…</option>' + list.map((e) => `<option value="${e.path}">${e.name}</option>`).join('');
 }
 
-el.btnFileOpen.addEventListener('click', async () => {
-  const filePath = await window.tline.chooseOpenPath();
-  if (!filePath) return;
+// 拡張子で.tline(自前JSON)か.oud/.oud2(OuDia/OuDiaSecond)かを判定。
+// `kind`（最近使ったファイルのエントリに保存済みの種別、旧エントリでは
+// undefined）があればそちらを優先し、なければパスの拡張子で判定する。
+function isOudPath(filePath, kind) {
+  if (kind) return kind === 'oud';
+  return /\.oud2?$/i.test(filePath);
+}
+
+async function openTlineFile(filePath) {
   try {
     const { diagram } = await window.tline.openFile(filePath);
     loadDiagram(diagram, filePath);
@@ -410,6 +690,38 @@ el.btnFileOpen.addEventListener('click', async () => {
     await refreshRecentFiles();
   } catch (err) {
     window.alert(`ファイルを開けませんでした: ${err && err.message ? err.message : err}`);
+    await window.tline.removeRecentFile(filePath);
+    await refreshRecentFiles();
+  }
+}
+
+// .oud/.oud2はDiaを1つ選ぶ手順が要るため即読み込みではなくパネルを開く
+// （「開く」ボタン・「最近使ったファイル」再選択、どちらから来ても共通）。
+async function openOudFile(filePath) {
+  try {
+    const { lineName, dias } = await window.tline.listOudDias(filePath);
+    if (dias.length === 0) {
+      window.alert('このファイルにはダイヤ（Dia）が見つかりませんでした。');
+      return;
+    }
+    state.pendingOudImport = { filePath, lineName };
+    el.oudImportLabel.textContent = `${basename(filePath)}（${lineName || '路線名なし'}）`;
+    el.oudDiaSelect.innerHTML = dias.map((d) => `<option value="${d.index}">${d.name}（${d.trainCount}本）</option>`).join('');
+    el.oudImportPanel.classList.remove('hidden');
+  } catch (err) {
+    window.alert(`OuDiaファイルを読み込めませんでした: ${err && err.message ? err.message : err}`);
+    await window.tline.removeRecentFile(filePath);
+    await refreshRecentFiles();
+  }
+}
+
+el.btnFileOpen.addEventListener('click', async () => {
+  const filePath = await window.tline.chooseOpenPath();
+  if (!filePath) return;
+  if (isOudPath(filePath)) {
+    await openOudFile(filePath);
+  } else {
+    await openTlineFile(filePath);
   }
 });
 
@@ -432,48 +744,30 @@ el.btnFileSaveAs.addEventListener('click', async () => {
 el.recentFilesSelect.addEventListener('change', async () => {
   const filePath = el.recentFilesSelect.value;
   if (!filePath) return;
-  try {
-    const { diagram } = await window.tline.openFile(filePath);
-    loadDiagram(diagram, filePath);
-    restoreOpsExtras(diagram);
-  } catch (err) {
-    window.alert(`ファイルを開けませんでした: ${err && err.message ? err.message : err}`);
-    await window.tline.removeRecentFile(filePath);
+  const entry = recentFilesByPath.get(filePath);
+  if (isOudPath(filePath, entry?.kind)) {
+    await openOudFile(filePath);
+  } else {
+    await openTlineFile(filePath);
   }
-  await refreshRecentFiles();
   el.recentFilesSelect.value = '';
 });
 
 // ---------- .oud/.oud2インポート ----------
 //
-// 2段階フロー: ファイルを選ぶ→Dia一覧を取得（複数持つファイルが普通、
-// NOTES.md参照）→ユーザーがDiaを選んで「取り込む」でTLINEのデータモデルに
-// 変換して読み込む。取り込み後、未確定（timesConfident:false）の列車が
-// あれば件数を知らせる（見た目上の区別はissue #1の今後の課題）。
+// 2段階フロー: ファイルを選ぶ（「開く」ボタンまたは「最近使ったファイル」、
+// 上のopenOudFile参照）→Dia一覧を取得（複数持つファイルが普通、NOTES.md
+// 参照）→ユーザーがDiaを選んで「取り込む」でTLINEのデータモデルに変換して
+// 読み込む。取り込み後、未確定（timesConfident:false）の列車があれば件数を
+// 知らせる（見た目上の区別はissue #1の今後の課題）。取り込みが成功すると
+// メインプロセス側（main.jsのoud:import）が最近使ったファイルにkind:'oud'
+// で登録するので、ここでもrefreshRecentFilesを呼んで一覧に反映する。
 
 function hideOudImportPanel() {
   state.pendingOudImport = null;
   el.oudImportPanel.classList.add('hidden');
   el.oudDiaSelect.innerHTML = '';
 }
-
-el.btnOudImport.addEventListener('click', async () => {
-  const filePath = await window.tline.chooseOpenOudPath();
-  if (!filePath) return;
-  try {
-    const { lineName, dias } = await window.tline.listOudDias(filePath);
-    if (dias.length === 0) {
-      window.alert('このファイルにはダイヤ（Dia）が見つかりませんでした。');
-      return;
-    }
-    state.pendingOudImport = { filePath, lineName };
-    el.oudImportLabel.textContent = `${basename(filePath)}（${lineName || '路線名なし'}）`;
-    el.oudDiaSelect.innerHTML = dias.map((d) => `<option value="${d.index}">${d.name}（${d.trainCount}本）</option>`).join('');
-    el.oudImportPanel.classList.remove('hidden');
-  } catch (err) {
-    window.alert(`OuDiaファイルを読み込めませんでした: ${err && err.message ? err.message : err}`);
-  }
-});
 
 el.oudDiaConfirm.addEventListener('click', async () => {
   if (!state.pendingOudImport) return;
@@ -482,6 +776,7 @@ el.oudDiaConfirm.addEventListener('click', async () => {
     const { diagram, stats } = await window.tline.importOud(state.pendingOudImport.filePath, diaIndex);
     loadDiagram(diagram, null, `${basename(state.pendingOudImport.filePath)} / ${stats.diaName}`);
     hideOudImportPanel();
+    await refreshRecentFiles();
     const notes = [];
     if (stats.skippedTrains > 0) notes.push(`時刻データのない${stats.skippedTrains}本は除外`);
     if (stats.unconfidentTrains > 0) notes.push(`${stats.unconfidentTrains}本は時刻の解読精度が低い可能性あり`);
