@@ -780,6 +780,13 @@ el.oudDiaConfirm.addEventListener('click', async () => {
     const notes = [];
     if (stats.skippedTrains > 0) notes.push(`時刻データのない${stats.skippedTrains}本は除外`);
     if (stats.unconfidentTrains > 0) notes.push(`${stats.unconfidentTrains}本は時刻の解読精度が低い可能性あり`);
+    // issue #11「番号なし運用同士の誤接続は検証手段がない」— 運用番号による
+    // 裏付けのない折り返しつなぎ（近接ヒューリスティックのみ）がどれだけ
+    // あるかをここで知らせる。ダイヤグラム側は該当する弧を薄く表示する
+    // （renderer/diagramView.mjsのturnbackArcSvg参照）。
+    if (stats.unverifiedChainLinks > 0) {
+      notes.push(`運用のつなぎ${stats.totalChainLinks}件中${stats.unverifiedChainLinks}件は運用番号による裏付けなし（ダイヤグラム上は薄く表示）`);
+    }
     window.alert(`「${stats.diaName}」から${stats.importedTrains}本の列車を取り込みました。${notes.length ? '（' + notes.join('、') + '）' : ''}`);
   } catch (err) {
     window.alert(`ダイヤを取り込めませんでした: ${err && err.message ? err.message : err}`);

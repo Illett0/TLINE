@@ -182,6 +182,12 @@ main { padding: 20px; }
    style=""でインライン指定するので、ここでは列車線と同じ太さと
    fill:none（pathなので塗りつぶさない）だけを決める。 */
 .diagram-operation-chain-line { fill: none; stroke-width: 2; }
+/* issue #11「番号なし運用同士の誤接続は検証手段がない」— 運用番号による
+   裏付けが一件もない弧（近接ヒューリスティックのみでの接続）を薄く表示し、
+   確証のある弧と見分けられるようにする。stroke-dasharrayは種別スタイルの
+   インラインstyle=""で上書きされてしまうためopacityで表現する
+   （diagramView.mjsのturnbackArcSvg参照）。 */
+.diagram-operation-chain-line--unverified { opacity: 0.45; }
 
 .diagram-legend {
   display: flex;

@@ -238,16 +238,28 @@ function turnbackGeometry(fromEnd, fromInner, toStart, toInner) {
 // Split at the midpoint into two paths so each half carries its own train's
 // type color AND dash pattern (a 回送 leg keeps its dashed style through the
 // turnback, as in the reference image's green 82B arcs).
-function turnbackArcSvg(geo, fromColor, fromDash, toColor, toDash) {
+// `unverified` (issue #11「番号なし運用同士の誤接続は検証手段がない」) — true
+// when this link has no recorded 運用番号 anywhere on its chain to cross-check
+// it against (see the caller and lib/oudParser.js's unverifiedChainLinks
+// comment): a pure proximity/track/gap match, not a false-positive detector,
+// but the one thing this project CAN show is which arcs it can't verify.
+// Rendered at reduced opacity via a CSS class (not stroke-dasharray, which
+// the inline train-type style above would just override) plus a hover
+// tooltip explaining why, so a user auditing a garage-like station (e.g. the
+// issue's 江ノ原信号場 example) can visually tell "confirmed continuation"
+// from "best guess" instead of every arc reading with equal confidence.
+function turnbackArcSvg(geo, fromColor, fromDash, toColor, toDash, unverified) {
   const { x1, y1, x2, y2, apexY, mx, rx } = geo;
   const c1 = Math.min(x1 + rx, mx);
   const c2 = Math.max(x2 - rx, mx);
   const d1 = `M ${x1} ${y1} Q ${x1} ${apexY} ${c1} ${apexY}` + (c1 < mx ? ` L ${mx} ${apexY}` : '');
   const d2 = (c2 > mx ? `M ${mx} ${apexY} L ${c2} ${apexY}` : `M ${mx} ${apexY}`) + ` Q ${x2} ${apexY} ${x2} ${y2}`;
   const dashStyle = (dash) => (dash ? `stroke-dasharray:${dash};` : '');
+  const cls = `diagram-operation-chain-line${unverified ? ' diagram-operation-chain-line--unverified' : ''}`;
+  const title = unverified ? '<title>運用番号による裏付けなし（近接推定のみ）</title>' : '';
   return (
-    `<path d="${d1}" class="diagram-operation-chain-line" style="stroke:${fromColor};${dashStyle(fromDash)}" />` +
-    `<path d="${d2}" class="diagram-operation-chain-line" style="stroke:${toColor};${dashStyle(toDash)}" />`
+    `<path d="${d1}" class="${cls}" style="stroke:${fromColor};${dashStyle(fromDash)}">${title}</path>` +
+    `<path d="${d2}" class="${cls}" style="stroke:${toColor};${dashStyle(toDash)}">${title}</path>`
   );
 }
 
@@ -537,23 +549,25 @@ export function renderDiagram(
       const to = endpointsByTrainId.get(train.chainNextTrainId);
       if (!from || !to) continue; // partner train had no drawable points (e.g. filtered elsewhere)
       const geo = turnbackGeometry(from.lastPoint, from.lastInner, to.firstPoint, to.firstInner);
+      // The chain-propagated number (see lib/oudParser.js's
+      // propagateOperationNumbers — the file records the 運用番号 only at
+      // the operation's 出区 head, so mid-chain turnbacks need the
+      // propagated field), with the raw per-endpoint values as fallback for
+      // data that reached us without the propagation pass. Computed before
+      // the toggle checks below because turnbackArcSvg also needs it (its
+      // absence is what makes a link "unverified" — see there).
+      const toOp = to.train.operation;
+      const fromOp = from.train.operation;
+      const number =
+        to.train.operationNumber ||
+        from.train.operationNumber ||
+        (toOp && toOp.origin && toOp.origin.operationNumber) ||
+        (fromOp && fromOp.terminal && fromOp.terminal.operationNumber);
       if (showChainLines) {
-        svgParts.push(turnbackArcSvg(geo, from.color, from.dash, to.color, to.dash));
+        svgParts.push(turnbackArcSvg(geo, from.color, from.dash, to.color, to.dash, !number));
       }
-      if (showTurnbackOperationNumbers) {
-        // The chain-propagated number (see lib/oudParser.js's
-        // propagateOperationNumbers — the file records the 運用番号 only at
-        // the operation's 出区 head, so mid-chain turnbacks need the
-        // propagated field), with the raw per-endpoint values as fallback
-        // for data that reached us without the propagation pass.
-        const toOp = to.train.operation;
-        const fromOp = from.train.operation;
-        const number =
-          to.train.operationNumber ||
-          from.train.operationNumber ||
-          (toOp && toOp.origin && toOp.origin.operationNumber) ||
-          (fromOp && fromOp.terminal && fromOp.terminal.operationNumber);
-        if (number) svgParts.push(turnbackNumberSvg(geo, number, to.color));
+      if (showTurnbackOperationNumbers && number) {
+        svgParts.push(turnbackNumberSvg(geo, number, to.color));
       }
     }
   }
