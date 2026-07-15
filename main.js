@@ -12,6 +12,16 @@ function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1400,
     height: 900,
+    // scripts/screenshot.js sets this when driving the app via Playwright to
+    // eyeball a change (see run/verify skill) — without it, launching that
+    // script pops a real 1400x900 window on top of whatever the user is
+    // doing (stealing focus, covering other windows) for the whole run.
+    // Chromium still renders/composites a `show: false` window normally —
+    // Playwright's CDP-based `page.screenshot()` reads the rendered frame
+    // directly, not a screen capture, so hidden windows screenshot exactly
+    // as before. Only gated behind this env var so the real app (`npm
+    // start`) is unaffected.
+    show: !process.env.TLINE_TEST_HIDDEN_WINDOW,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,

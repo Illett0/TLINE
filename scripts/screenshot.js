@@ -28,7 +28,15 @@ async function main() {
 
   const app = await electron.launch({
     args: [path.join(__dirname, '..')],
-    env: { ...process.env, TLINE_TEST_SAVE_PATH: SAVE_PATH, TLINE_TEST_OPEN_FILE: OPEN_FIXTURE_PATH },
+    // TLINE_TEST_HIDDEN_WINDOW keeps the driven window off-screen (main.js
+    // creates it with show:false) so this script doesn't pop a real window
+    // over whatever else is on the user's desktop while it runs.
+    env: {
+      ...process.env,
+      TLINE_TEST_SAVE_PATH: SAVE_PATH,
+      TLINE_TEST_OPEN_FILE: OPEN_FIXTURE_PATH,
+      TLINE_TEST_HIDDEN_WINDOW: '1',
+    },
   });
   const window = await app.firstWindow();
   await window.waitForLoadState('load');
