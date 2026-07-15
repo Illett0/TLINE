@@ -11,6 +11,22 @@ function todayDateString() {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
+// ズーム倍率の範囲（縦=駅間隔、横=時間軸）。stepDiagramZoomY/setupDiagramPanZoom
+// の外側（state初期化）でも使うため先出しで定義。
+const ZOOM_Y_MIN = 0.3;
+const ZOOM_Y_MAX = 4;
+const ZOOM_X_MIN = 0.3;
+const ZOOM_X_MAX = 6;
+
+// localStorageに保存したズーム倍率を読み戻す（2026-07-15、要望「ズーム倍率
+// をキャッシュできますか」）。数値でない・範囲外（保存後にMIN/MAXを変えた
+// 場合等）はデフォルト1に戻す。テーマ設定（下記state.theme）と同じ
+// localStorage直読みパターン。
+function loadStoredZoom(key, min, max) {
+  const raw = Number(localStorage.getItem(key));
+  return Number.isFinite(raw) && raw >= min && raw <= max ? raw : 1;
+}
+
 const state = {
   diagram: sampleDiagram, // 計画。ファイルを開くとその内容に差し替わる（state.currentFilePath参照）
   currentFilePath: null, // null = サンプルデータのまま未保存・未オープン、または.oudインポート直後（保存先未確定）
@@ -30,8 +46,8 @@ const state = {
   actualAutoComplete: true, // 入力駅以降へ同じ遅延を自動反映するか（issue #5）
   actualCompareTarget: 'plan', // 'plan' | 'dispatch' — 実績タブで何と差分を取るか（issue #7）
   pendingOudImport: null, // { filePath, lineName } while the Dia picker is shown; null otherwise
-  diagramZoomY: 1, // 縦方向（駅間隔）のズーム。ヘッダー横のボタンで変更（2026-07-14、専用ボタン化）
-  diagramZoomX: 1, // マウスホイールによる横方向（時間軸）のみのズーム。縦はdiagramZoomYのみに従う（下記setupDiagramPanZoom参照）
+  diagramZoomY: loadStoredZoom('tline-zoom-y', ZOOM_Y_MIN, ZOOM_Y_MAX), // 縦方向（駅間隔）のズーム。ヘッダー横のボタンで変更（2026-07-14、専用ボタン化）。前回値をlocalStorageから復元
+  diagramZoomX: loadStoredZoom('tline-zoom-x', ZOOM_X_MIN, ZOOM_X_MAX), // マウスホイールによる横方向（時間軸）のみのズーム。縦はdiagramZoomYのみに従う（下記setupDiagramPanZoom参照）。前回値をlocalStorageから復元
   theme: ['light', 'classic'].includes(localStorage.getItem('tline-theme')) ? localStorage.getItem('tline-theme') : 'dark', // ダーク/ライト/クラシック（issue #8）
   // 入出庫・運用関連の5トグル（2026-07-14、issue #10）。元は「入出庫記号」
   // 「運用番号」の2つだったが、①運用のつなぎ線は入出庫記号と独立にON/OFF
@@ -90,14 +106,58 @@ const el = {
   oudDiaSelect: document.getElementById('oud-dia-select'),
   oudDiaConfirm: document.getElementById('oud-dia-confirm'),
   oudDiaCancel: document.getElementById('oud-dia-cancel'),
+  appToast: document.getElementById('app-toast'),
+  appToastMessage: document.getElementById('app-toast-message'),
+  appToastClose: document.getElementById('app-toast-close'),
 };
 
+// ---------- 通知トースト（window.alert()の非モーダル代替。style.cssの
+// .app-toastコメント参照） ----------
+
+let toastHideTimer = null;
+function showToast(message, kind = 'info') {
+  el.appToastMessage.textContent = message;
+  el.appToast.classList.toggle('app-toast--error', kind === 'error');
+  el.appToast.classList.remove('hidden');
+  clearTimeout(toastHideTimer);
+  toastHideTimer = setTimeout(() => el.appToast.classList.add('hidden'), kind === 'error' ? 8000 : 5000);
+}
+el.appToastClose.addEventListener('click', () => {
+  clearTimeout(toastHideTimer);
+  el.appToast.classList.add('hidden');
+});
+
 // ---------- Tabs ----------
+//
+// renderTabLazy（2026-07-15、報告「Noout系ファイルでズーム・縦割合変更が
+// 重い」への対応）: ズーム・テーマ・表示トグルはすべて計画・運転整理
+// 両タブ共通のstate（diagramZoomY/X等）を書き換えるため、以前は変更の
+// たびに両タブのrenderPlanTab/renderDispatchTab（ダイヤグラムSVG＋
+// タイムテーブルHTMLの丸ごと再構築、駅×列車数に比例して重い）を無条件で
+// 呼んでいた——ホイールでのズームは1操作で何十回もfireするうえ、常に
+// 「今見えていない方のタブ」の分は完全に無駄な作業だった。表示中のタブ
+// だけ即座に再描画し、非表示側は「dirty」フラグだけ立てて、実際にその
+// タブに切り替えられた瞬間に描く（結果は同じ、無駄な作業をしないだけ）。
+const dirtyTabs = { plan: false, dispatch: false };
+function isTabActive(tabId) {
+  return document.getElementById(`tab-${tabId}`).classList.contains('active');
+}
+function renderTabLazy(tabId, renderFn) {
+  if (isTabActive(tabId)) {
+    renderFn();
+    dirtyTabs[tabId] = false;
+  } else {
+    dirtyTabs[tabId] = true;
+  }
+}
 
 for (const button of el.tabButtons) {
   button.addEventListener('click', () => {
     for (const b of el.tabButtons) b.classList.toggle('active', b === button);
     for (const panel of el.tabPanels) panel.classList.toggle('active', panel.id === `tab-${button.dataset.tab}`);
+    const tabId = button.dataset.tab;
+    if (tabId === 'plan' && dirtyTabs.plan) renderTabLazy('plan', renderPlanTab);
+    if (tabId === 'dispatch' && dirtyTabs.dispatch) renderTabLazy('dispatch', renderDispatchTab);
   });
 }
 
@@ -113,9 +173,17 @@ for (const button of el.tabButtons) {
 //   'general' — 一般駅: 発車時刻のみ1マス（発が無い列車の終着駅では着で代用）
 //   それ以外  — 区分不明: 着/発の2マス（縦積み、区分ができるようになる前の
 //               基本仕様。手作成の計画データはこちらに常に該当する）
-function stopCellHtml(stop, station) {
+// `isOrigin` — true when `stop` is the train's own first stop. A train's
+// EkiJikoku never has a real arrival there (it starts existing on the line
+// at that point) — decodeEkiJikoku's bare-single-time fallback just sets
+// arrival=departure for display convenience, which read as a bogus
+// "arrived, then immediately departed" at the origin (2026-07-15 report).
+// Blanked here rather than reinterpreted, matching the ordinary empty-cell
+// case elsewhere in this table — no extra centering/consolidation for the
+// single remaining value (project owner: 中央揃えは不要、ないものは普通に空欄).
+function stopCellHtml(stop, station, isOrigin) {
   if (!stop) return '<td class="stop-cell">—</td>';
-  const arr = stop.arrival ?? '';
+  const arr = isOrigin ? '' : stop.arrival ?? '';
   const dep = stop.departure ?? '';
 
   if (station.scale === 'general') {
@@ -123,7 +191,7 @@ function stopCellHtml(stop, station) {
     return `<td class="stop-cell stop-cell--general">${dep || arr}</td>`;
   }
   if (station.scale === 'major') {
-    const track = stop.track != null ? `${stop.track}番線` : '';
+    const track = stop.track != null ? `${stop.track}` : '';
     return (
       `<td class="stop-cell stop-cell--major">` +
       `<div class="stop-cell-row stop-cell-row--arr">${arr}</div>` +
@@ -146,7 +214,10 @@ function stopTableHtml(diagram, { trainOverride } = {}) {
   const rows = diagram.line.stations
     .map((station) => {
       const cells = trains
-        .map((t) => stopCellHtml(t.stops.find((s) => s.stationId === station.id), station))
+        .map((t) => {
+          const stop = t.stops.find((s) => s.stationId === station.id);
+          return stopCellHtml(stop, station, stop === t.stops[0]);
+        })
         .join('');
       return `<tr><th>${station.name}</th>${cells}</tr>`;
     })
@@ -200,15 +271,16 @@ function updateDiagramControls() {
 // 縦方向（駅間隔）ズームは専用の＋/－ボタンで変更する（2026-07-14、
 // スライダーから変更——横方向はダイヤグラム上のホイール操作に一本化した
 // ため、スライダーが縦横どちらを動かしているのか分かりにくかった）。
-const ZOOM_Y_MIN = 0.3;
-const ZOOM_Y_MAX = 4;
+// ZOOM_Y_MIN/MAXはstate初期化（localStorageからの復元）でも使うため
+// ファイル先頭で定義済み。
 const ZOOM_Y_STEP = 1.15; // ボタン1クリックあたりの倍率
 
 function stepDiagramZoomY(factor) {
   state.diagramZoomY = Math.min(ZOOM_Y_MAX, Math.max(ZOOM_Y_MIN, state.diagramZoomY * factor));
+  localStorage.setItem('tline-zoom-y', String(state.diagramZoomY));
   updateDiagramControls();
-  renderPlanTab();
-  renderDispatchTab();
+  renderTabLazy('plan', renderPlanTab);
+  renderTabLazy('dispatch', renderDispatchTab);
 }
 
 el.planZoomIn.addEventListener('click', () => stepDiagramZoomY(ZOOM_Y_STEP));
@@ -224,8 +296,8 @@ el.dispatchZoomOut.addEventListener('click', () => stepDiagramZoomY(1 / ZOOM_Y_S
 // ズームする（diagramView.mjsのrenderDiagramの`zoomX`引数）。カーソル位置の
 // 時刻がズーム後も画面上の同じ位置に留まるよう、スクロール位置を補正する
 // （地図アプリ等でおなじみの「カーソル位置を中心にズーム」の挙動）。
-const ZOOM_X_MIN = 0.3;
-const ZOOM_X_MAX = 6;
+// ZOOM_X_MIN/MAXはstate初期化（localStorageからの復元）でも使うため
+// ファイル先頭で定義済み。
 const ZOOM_X_STEP = 1.12; // ホイール1ノッチあたりの倍率
 
 function setupDiagramPanZoom(container) {
@@ -281,8 +353,9 @@ function setupDiagramPanZoom(container) {
       const newCursorContentX = MARGIN.left + (cursorContentX - MARGIN.left) * ratio;
 
       state.diagramZoomX = newZoomX;
-      renderPlanTab();
-      renderDispatchTab();
+      localStorage.setItem('tline-zoom-x', String(state.diagramZoomX));
+      renderTabLazy('plan', renderPlanTab);
+      renderTabLazy('dispatch', renderDispatchTab);
 
       container.scrollLeft = newCursorContentX - cursorClientX;
     },
@@ -299,8 +372,8 @@ function bindDiagramToggle(stateKey, planEl, dispatchEl) {
   const apply = (checked) => {
     state[stateKey] = checked;
     updateDiagramControls();
-    renderPlanTab();
-    renderDispatchTab();
+    renderTabLazy('plan', renderPlanTab);
+    renderTabLazy('dispatch', renderDispatchTab);
   };
   planEl.addEventListener('change', () => apply(planEl.checked));
   dispatchEl.addEventListener('change', () => apply(dispatchEl.checked));
@@ -317,8 +390,8 @@ el.themeSelect.addEventListener('change', () => {
   localStorage.setItem('tline-theme', state.theme);
   document.documentElement.dataset.theme = state.theme;
   updateDiagramControls();
-  renderPlanTab();
-  renderDispatchTab();
+  renderTabLazy('plan', renderPlanTab);
+  renderTabLazy('dispatch', renderDispatchTab);
 });
 
 // ---------- 運転整理 ----------
@@ -581,7 +654,7 @@ function updateFileLabel() {
 // 「サンプルデータ」表示と区別するためのラベル（例:「碧洛電車.oud2 / 通常」）。
 function loadDiagram(diagram, filePath, description) {
   if (!isValidDiagram(diagram)) {
-    window.alert('ダイヤファイルの形式が正しくありません（line.stations / trains が必要です）。');
+    showToast('ダイヤファイルの形式が正しくありません（line.stations / trains が必要です）。', 'error');
     return;
   }
   state.diagram = { line: diagram.line, trains: diagram.trains }; // dispatch/actualはrestoreOpsExtrasが別途扱う（state.diagramには含めない）
@@ -595,9 +668,9 @@ function loadDiagram(diagram, filePath, description) {
   state.actualCompareTarget = 'plan';
 
   updateFileLabel();
-  renderPlanTab();
+  renderTabLazy('plan', renderPlanTab);
   populateDispatchSelectors();
-  renderDispatchTab();
+  renderTabLazy('dispatch', renderDispatchTab);
   renderActualTab();
 }
 
@@ -639,7 +712,7 @@ function restoreOpsExtras(loaded) {
       state.dispatchDelta = loaded.dispatch.deltaSeconds;
       state.adjustedTrain = applyDelay(train, loaded.dispatch.fromStationId, loaded.dispatch.deltaSeconds);
       populateDispatchSelectors();
-      renderDispatchTab();
+      renderTabLazy('dispatch', renderDispatchTab);
     }
   }
   if (loaded.actualByDate) {
@@ -689,7 +762,7 @@ async function openTlineFile(filePath) {
     restoreOpsExtras(diagram);
     await refreshRecentFiles();
   } catch (err) {
-    window.alert(`ファイルを開けませんでした: ${err && err.message ? err.message : err}`);
+    showToast(`ファイルを開けませんでした: ${err && err.message ? err.message : err}`, 'error');
     await window.tline.removeRecentFile(filePath);
     await refreshRecentFiles();
   }
@@ -701,7 +774,7 @@ async function openOudFile(filePath) {
   try {
     const { lineName, dias } = await window.tline.listOudDias(filePath);
     if (dias.length === 0) {
-      window.alert('このファイルにはダイヤ（Dia）が見つかりませんでした。');
+      showToast('このファイルにはダイヤ（Dia）が見つかりませんでした。', 'error');
       return;
     }
     state.pendingOudImport = { filePath, lineName };
@@ -709,7 +782,7 @@ async function openOudFile(filePath) {
     el.oudDiaSelect.innerHTML = dias.map((d) => `<option value="${d.index}">${d.name}（${d.trainCount}本）</option>`).join('');
     el.oudImportPanel.classList.remove('hidden');
   } catch (err) {
-    window.alert(`OuDiaファイルを読み込めませんでした: ${err && err.message ? err.message : err}`);
+    showToast(`OuDiaファイルを読み込めませんでした: ${err && err.message ? err.message : err}`, 'error');
     await window.tline.removeRecentFile(filePath);
     await refreshRecentFiles();
   }
@@ -787,9 +860,9 @@ el.oudDiaConfirm.addEventListener('click', async () => {
     if (stats.unverifiedChainLinks > 0) {
       notes.push(`運用のつなぎ${stats.totalChainLinks}件中${stats.unverifiedChainLinks}件は運用番号による裏付けなし（ダイヤグラム上は薄く表示）`);
     }
-    window.alert(`「${stats.diaName}」から${stats.importedTrains}本の列車を取り込みました。${notes.length ? '（' + notes.join('、') + '）' : ''}`);
+    showToast(`「${stats.diaName}」から${stats.importedTrains}本の列車を取り込みました。${notes.length ? '（' + notes.join('、') + '）' : ''}`);
   } catch (err) {
-    window.alert(`ダイヤを取り込めませんでした: ${err && err.message ? err.message : err}`);
+    showToast(`ダイヤを取り込めませんでした: ${err && err.message ? err.message : err}`, 'error');
   }
 });
 
@@ -802,8 +875,8 @@ el.oudDiaCancel.addEventListener('click', () => {
 document.documentElement.dataset.theme = state.theme;
 updateFileLabel();
 updateDiagramControls();
-renderPlanTab();
+renderTabLazy('plan', renderPlanTab);
 populateDispatchSelectors();
-renderDispatchTab();
+renderTabLazy('dispatch', renderDispatchTab);
 renderActualTab();
 refreshRecentFiles();
