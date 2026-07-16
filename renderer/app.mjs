@@ -190,6 +190,11 @@ function stopCellHtml(stop, station, isOrigin) {
     // 一般駅は停車時分が短い前提で発車時刻のみ。終着駅（発が無い）は着で代用。
     return `<td class="stop-cell stop-cell--general">${dep || arr}</td>`;
   }
+  // 始発駅（isOrigin）は構造上、実際の着時刻を持たない（decodeEkiJikokuの
+  // 単一時刻フォールバックが着=発を仮に埋めるだけで、上のarrも常に空欄）。
+  // 他の空欄マス（例: 終着駅の発）は従来通り空行のまま残すが、始発駅だけは
+  // 空の着行そのものを描画せず、縦の無駄な空白を無くす（2026-07-16要望）。
+  const arrRow = isOrigin ? '' : `<div class="stop-cell-row stop-cell-row--arr">${arr}</div>`;
   if (station.scale === 'major') {
     // trackLabel（lib/oudParser.jsのresolveTrackLabel）— その駅自身が宣言
     // した番線名（TrackRyakusyou優先）に解決済みの値。丸数字(①②③)・上本/
@@ -200,18 +205,13 @@ function stopCellHtml(stop, station, isOrigin) {
     const track = stop.trackLabel ?? (stop.track != null ? `${stop.track}` : '');
     return (
       `<td class="stop-cell stop-cell--major">` +
-      `<div class="stop-cell-row stop-cell-row--arr">${arr}</div>` +
+      arrRow +
       `<div class="stop-cell-row stop-cell-row--dep">${dep}</div>` +
       `<div class="stop-cell-row stop-cell-row--track">${track}</div>` +
       `</td>`
     );
   }
-  return (
-    `<td class="stop-cell stop-cell--basic">` +
-    `<div class="stop-cell-row stop-cell-row--arr">${arr}</div>` +
-    `<div class="stop-cell-row stop-cell-row--dep">${dep}</div>` +
-    `</td>`
-  );
+  return `<td class="stop-cell stop-cell--basic">${arrRow}<div class="stop-cell-row stop-cell-row--dep">${dep}</div></td>`;
 }
 
 function stopTableHtml(diagram, { trainOverride } = {}) {

@@ -273,6 +273,75 @@ function turnbackArcSvg(geo, fromColor, fromDash, toColor, toDash, unverified) {
   );
 }
 
+// 同方向継続のつなぎ: a chain connection where the train does NOT reverse
+// direction — it just changes number/type at the same station (e.g. 回送
+// が本線列車に化ける、Diagram/image「スクリーンショット 2026-07-16
+// 165202.png」参照）。turnbackGeometry/turnbackArcSvgの「站の外側へ弧を
+// 描く」表現は方向反転（同じ側から来て同じ側へ折り返す）を前提にしており、
+// 反転しないケースに使うと不自然な小さな段差にしかならなかった
+// （turnbackGeometryのelse分岐、bulge=5の「a small downward bulge just
+// to stay off the gridline」がまさにこれ）。2026-07-16のプロジェクト
+// オーナー指摘を受け、方向反転しない場合は代わりにこちらを使う——到着線・
+// 出発線それぞれの傾き（fromInner/toInner、なければ水平とみなす）へ滑らかに
+// 接続する3次ベジェのS字カーブ。isReversalConnectionでどちらを使うか判定。
+function isReversalConnection(fromInner, toInner, yRef) {
+  const fromBelow = fromInner ? fromInner[1] > yRef + 0.5 : false;
+  const toBelow = toInner ? toInner[1] > yRef + 0.5 : false;
+  const fromAbove = fromInner ? fromInner[1] < yRef - 0.5 : false;
+  const toAbove = toInner ? toInner[1] < yRef - 0.5 : false;
+  return (fromBelow && toBelow) || (fromAbove && toAbove);
+}
+
+function unitVector([dx, dy]) {
+  const len = Math.hypot(dx, dy) || 1;
+  return [dx / len, dy / len];
+}
+
+const midpoint = (a, b) => [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+
+// Builds a single cubic Bezier from fromEnd to toStart whose tangent at
+// each end matches that train's own approach/departure slope, then splits
+// it at t=0.5 (De Casteljau) into two halves so each can carry its own
+// train's color/dash — same two-tone trick turnbackArcSvg uses, just on a
+// smooth curve instead of a flat-topped cap (there's no "outside the
+// station line" apex to bulge toward here, since the lines aren't
+// reversing — see module comment above).
+function throughGeometry(fromEnd, fromInner, toStart, toInner) {
+  const [x1, y1] = fromEnd;
+  const [x2, y2] = toStart;
+  const dirFrom = fromInner ? unitVector([x1 - fromInner[0], y1 - fromInner[1]]) : [1, 0];
+  const dirTo = toInner ? unitVector([toInner[0] - x2, toInner[1] - y2]) : [1, 0];
+  const controlDist = Math.min(Math.max(x2 - x1, 1) * 0.5, 40);
+  const c1 = [x1 + dirFrom[0] * controlDist, y1 + dirFrom[1] * controlDist];
+  const c2 = [x2 - dirTo[0] * controlDist, y2 - dirTo[1] * controlDist];
+  const p01 = midpoint(fromEnd, c1);
+  const p12 = midpoint(c1, c2);
+  const p23 = midpoint(c2, toStart);
+  const p012 = midpoint(p01, p12);
+  const p123 = midpoint(p12, p23);
+  const mid = midpoint(p012, p123);
+  return { p1: fromEnd, c1a: p01, c1b: p012, mid, c2a: p123, c2b: p23, p2: toStart };
+}
+
+function throughConnectorSvg(geo, fromColor, fromDash, toColor, toDash, unverified) {
+  const { p1, c1a, c1b, mid, c2a, c2b, p2 } = geo;
+  const d1 = `M ${p1[0]} ${p1[1]} C ${c1a[0]} ${c1a[1]} ${c1b[0]} ${c1b[1]} ${mid[0]} ${mid[1]}`;
+  const d2 = `M ${mid[0]} ${mid[1]} C ${c2a[0]} ${c2a[1]} ${c2b[0]} ${c2b[1]} ${p2[0]} ${p2[1]}`;
+  const dashStyle = (dash) => (dash ? `stroke-dasharray:${dash};` : '');
+  const cls = `diagram-operation-chain-line${unverified ? ' diagram-operation-chain-line--unverified' : ''}`;
+  const title = unverified ? '<title>運用番号による裏付けなし（近接推定のみ）</title>' : '';
+  return (
+    `<path d="${d1}" class="${cls}" style="stroke:${fromColor};${dashStyle(fromDash)}">${title}</path>` +
+    `<path d="${d2}" class="${cls}" style="stroke:${toColor};${dashStyle(toDash)}">${title}</path>`
+  );
+}
+
+// 折り返し運番と同じ役割だが、弧の頂点ではなくS字カーブの中点のすぐ上に
+// 置く（頂点=stationの外側という概念がこちらにはないため）。
+function throughNumberSvg(geo, text, color) {
+  return `<text x="${geo.mid[0]}" y="${geo.mid[1] - 8}" text-anchor="middle" class="diagram-operation-label" style="fill:${color};">${text}</text>`;
+}
+
 // 折り返し運番: drawn ONCE per matched pair, horizontally centered on the
 // outside of the turnback arc's apex (above an upward cap, below a downward
 // one) — matching the reference image's "14A"/"10A" over the caps at 高岡
@@ -562,7 +631,14 @@ export function renderDiagram(
       const from = endpointsByTrainId.get(train.id);
       const to = endpointsByTrainId.get(train.chainNextTrainId);
       if (!from || !to) continue; // partner train had no drawable points (e.g. filtered elsewhere)
-      const geo = turnbackGeometry(from.lastPoint, from.lastInner, to.firstPoint, to.firstInner);
+      // Reversal (turnback, arc bulging past the station line) vs.
+      // same-direction continuation (S-curve blending the two slopes) — see
+      // isReversalConnection's doc comment above.
+      const yRef = (from.lastPoint[1] + to.firstPoint[1]) / 2;
+      const reversal = isReversalConnection(from.lastInner, to.firstInner, yRef);
+      const geo = reversal
+        ? turnbackGeometry(from.lastPoint, from.lastInner, to.firstPoint, to.firstInner)
+        : throughGeometry(from.lastPoint, from.lastInner, to.firstPoint, to.firstInner);
       // The chain-propagated number (see lib/oudParser.js's
       // propagateOperationNumbers — the file records the 運用番号 only at
       // the operation's 出区 head, so mid-chain turnbacks need the
@@ -578,10 +654,14 @@ export function renderDiagram(
         (toOp && toOp.origin && toOp.origin.operationNumber) ||
         (fromOp && fromOp.terminal && fromOp.terminal.operationNumber);
       if (showChainLines) {
-        svgParts.push(turnbackArcSvg(geo, from.color, from.dash, to.color, to.dash, !number));
+        svgParts.push(
+          reversal
+            ? turnbackArcSvg(geo, from.color, from.dash, to.color, to.dash, !number)
+            : throughConnectorSvg(geo, from.color, from.dash, to.color, to.dash, !number)
+        );
       }
       if (showTurnbackOperationNumbers && number) {
-        svgParts.push(turnbackNumberSvg(geo, number, to.color));
+        svgParts.push(reversal ? turnbackNumberSvg(geo, number, to.color) : throughNumberSvg(geo, number, to.color));
       }
     }
   }

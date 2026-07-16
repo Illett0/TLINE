@@ -213,7 +213,12 @@ main { padding: 20px; }
   stroke-dasharray: 5, 4;
 }
 
-.diagram-depot-marker { fill: none; stroke-width: 1.5; }
+/* fill:noneだと既定のpointer-events:visiblePaintedでは1.5pxの輪郭線しか
+   ホバー判定されず、depotWorkツールチップ（<title>、diagramView.mjsの
+   depotMarkerSvg）がほぼ反応しなかった（2026-07-16報告）。pointer-events:
+   allで塗りの有無に関わらず図形全体をヒット判定させ、○/▽の内側もホバー
+   できるようにする。 */
+.diagram-depot-marker { fill: none; stroke-width: 1.5; pointer-events: all; }
 .diagram-operation-label { font-size: 10px; }
 .diagram-train-number-label { font-size: 10px; font-weight: 600; }
 /* 折り返しのつなぎ弧（同一番線・近接時刻で検出した列車間の折り返し接続、
