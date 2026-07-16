@@ -166,10 +166,20 @@ function trainPolylineSegments(train, stations, maxDistanceKm, plotHeight, start
 // hand-off from another train. Whenever a chain partner *is* found, a
 // connecting line is drawn instead (see operationChainLineSvg) and no
 // boundary marker is drawn on that end.
-function depotMarkerSvg([x, y], kind, color) {
-  if (kind === 'origin') return `<circle cx="${x}" cy="${y}" r="5" class="diagram-depot-marker" style="stroke:${color};" />`;
+// `depotWork` — the Operation field's decoded 入出庫(depot entry/exit)
+// record for this endpoint, if any (lib/oudParser.jsのparseDepotWork参照、
+// issue #11/#12の2026-07-16調査で判明: 営業列車として現れる直前/直後に
+// 車両基地との間で発生した回送的な出入りの着発時刻)。`track`の意味は
+// まだ仮説段階（車庫側の入出庫経路/番線と推測）のため、確定情報として
+// ではなく「参考情報」と明記した上でツールチップにのみ出す — 通常表示
+// には影響しない、控えめな追加情報。
+function depotMarkerSvg([x, y], kind, color, depotWork) {
+  const title = depotWork
+    ? `<title>入出庫(参考): ${depotWork.arrival}→${depotWork.departure}${depotWork.track != null ? ` (番線${depotWork.track}?)` : ''}</title>`
+    : '';
+  if (kind === 'origin') return `<circle cx="${x}" cy="${y}" r="5" class="diagram-depot-marker" style="stroke:${color};">${title}</circle>`;
   const size = 6;
-  return `<polygon points="${x - size},${y - size} ${x + size},${y - size} ${x},${y + size}" class="diagram-depot-marker" style="stroke:${color};" />`;
+  return `<polygon points="${x - size},${y - size} ${x + size},${y - size} ${x},${y + size}" class="diagram-depot-marker" style="stroke:${color};">${title}</polygon>`;
 }
 
 // The short operation-number label ("10A", "82B" — matches
@@ -514,8 +524,12 @@ export function renderDiagram(
       // 出区/入区(等) marker vs. connecting line: see depotMarkerSvg's doc
       // comment — a boundary marker is drawn only when no chain partner was
       // found for that end, independent of the Operation field's own code.
-      if (showDepotMarkers && !hasIncomingChain) svgParts.push(depotMarkerSvg(firstPoint, 'origin', markerColor));
-      if (showDepotMarkers && !hasOutgoingChain) svgParts.push(depotMarkerSvg(lastPoint, 'terminal', markerColor));
+      if (showDepotMarkers && !hasIncomingChain) {
+        svgParts.push(depotMarkerSvg(firstPoint, 'origin', markerColor, origin && origin.depotWork));
+      }
+      if (showDepotMarkers && !hasOutgoingChain) {
+        svgParts.push(depotMarkerSvg(lastPoint, 'terminal', markerColor, terminal && terminal.depotWork));
+      }
       // 入出庫運番（チェーンなし端点）のみここで描く。折り返し運番
       // （チェーンあり端点）は下のチェーンパスで弧の頂点にペアごとに
       // 1つだけ描く（以前は両列車の端点に同じ番号が2回出ていた）。
