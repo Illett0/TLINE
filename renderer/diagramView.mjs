@@ -398,14 +398,29 @@ function legendHtml(trains, resolveColor) {
     seen.set(train.trainType.name, train.trainType);
   }
   if (seen.size === 0) return '';
-  const items = [...seen.values()]
+  const types = [...seen.values()];
+  // OuDiaSecond commonly defines several distinct types that share one
+  // abbreviation (e.g. 回送/回送(時刻変更)/臨時回送 all abbreviate to 回送,
+  // differing only in line style) — real files (館浜野球臨司令v0421.oud2)
+  // can use several of them in the same Dia, which made the legend show
+  // "回送" two or three times with no way to tell the rows apart besides a
+  // subtle dash pattern. Fall back to the full name only for the colliding
+  // entries so the common case (one type per abbreviation) is unaffected.
+  const abbrCounts = new Map();
+  for (const type of types) {
+    const abbrLabel = type.abbreviation || type.name;
+    abbrCounts.set(abbrLabel, (abbrCounts.get(abbrLabel) || 0) + 1);
+  }
+  const items = types
     .map((type) => {
+      const abbrLabel = type.abbreviation || type.name;
+      const label = abbrCounts.get(abbrLabel) > 1 ? type.name : abbrLabel;
       const color = resolveColor(type.color);
       const dash = type.dashArray ? ` stroke-dasharray="${type.dashArray}"` : '';
       return (
         `<span class="diagram-legend-item">` +
         `<svg width="20" height="10" class="diagram-legend-swatch"><line x1="0" y1="5" x2="20" y2="5" stroke="${color}" stroke-width="2"${dash} /></svg>` +
-        `<span>${type.abbreviation || type.name}</span>` +
+        `<span>${label}</span>` +
         `</span>`
       );
     })
