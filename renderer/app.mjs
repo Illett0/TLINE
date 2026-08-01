@@ -49,6 +49,14 @@ const state = {
   pendingOudImport: null, // { filePath, lineName } while the Dia picker is shown; null otherwise
   diagramZoomY: loadStoredZoom('tline-zoom-y', ZOOM_Y_MIN, ZOOM_Y_MAX), // 縦方向（駅間隔）のズーム。ヘッダー横のボタンで変更（2026-07-14、専用ボタン化）。前回値をlocalStorageから復元
   diagramZoomX: loadStoredZoom('tline-zoom-x', ZOOM_X_MIN, ZOOM_X_MAX), // マウスホイールによる横方向（時間軸）のみのズーム。縦はdiagramZoomYのみに従う（下記setupDiagramPanZoom参照）。前回値をlocalStorageから復元
+  // 4タブ（計画/運転整理/実績/仕業）はそれぞれ別のdiagram-container要素を
+  // 持つため、スクロール位置はDOM上は独立している。ズーム率と同様
+  // state側で共通に持ち、setupDiagramPanZoomのscrollイベントで更新・
+  // タブ切り替え/再描画のたびに反映することで「どのタブでも同じ表示範囲」
+  // にする（2026-08-01要望）。localStorage永続化はしない（ズームと違い
+  // セッションをまたいで復元する価値は薄いため）。
+  diagramScrollLeft: 0,
+  diagramScrollTop: 0,
   theme: ['light', 'classic'].includes(localStorage.getItem('tline-theme')) ? localStorage.getItem('tline-theme') : 'dark', // ダーク/ライト/クラシック（issue #8）
   // 入出庫・運用関連の5トグル（2026-07-14、issue #10）。元は「入出庫記号」
   // 「運用番号」の2つだったが、①運用のつなぎ線は入出庫記号と独立にON/OFF
@@ -186,6 +194,16 @@ for (const button of el.tabButtons) {
     if (tabId === 'dispatch' && dirtyTabs.dispatch) renderTabLazy('dispatch', renderDispatchTab);
     if (tabId === 'actual' && dirtyTabs.actual) renderTabLazy('actual', renderActualTab);
     if (tabId === 'duty' && dirtyTabs.duty) renderTabLazy('duty', renderDutyTab);
+    // dirtyでなければ上のrenderTabLazyは何もしない（renderDiagramSynced経由
+    // のスクロール同期も走らない）ので、切り替え先のタブが前回表示された
+    // ときから他タブでスクロール/ズームされていた場合に備えてここでも
+    // 直接合わせる（tabId+"Diagram"がel内の対応するcontainer参照と一致する
+    // 命名規則、例: 'plan'->el.planDiagram）。
+    const container = el[`${tabId}Diagram`];
+    if (container) {
+      container.scrollLeft = state.diagramScrollLeft;
+      container.scrollTop = state.diagramScrollTop;
+    }
   });
 }
 
@@ -278,8 +296,19 @@ function diagramDisplayOptions() {
   };
 }
 
+// renderDiagram()に加えて、4タブ共通のスクロール位置（state.diagramScroll
+// Left/Top、上記参照）をこの再描画のたびに適用する薄いラッパー。
+// containerのinnerHTMLを丸ごと差し替えてもscrollLeft/Top自体は保持される
+// が、タブ切り替え直後（別要素のスクロールをコピーする必要がある場合）や
+// 他タブでのズーム変更後の初回再描画では明示的に合わせ直す必要がある。
+function renderDiagramSynced(container, data, options) {
+  renderDiagram(container, data, options);
+  container.scrollLeft = state.diagramScrollLeft;
+  container.scrollTop = state.diagramScrollTop;
+}
+
 function renderPlanTab() {
-  renderDiagram(el.planDiagram, { stations: state.diagram.line.stations, trains: state.diagram.trains }, diagramDisplayOptions());
+  renderDiagramSynced(el.planDiagram, { stations: state.diagram.line.stations, trains: state.diagram.trains }, diagramDisplayOptions());
   el.planTable.innerHTML = stopTableHtml(state.diagram);
 }
 
@@ -336,20 +365,24 @@ el.actualZoomOut.addEventListener('click', () => stepDiagramZoomY(1 / ZOOM_Y_STE
 el.dutyZoomIn.addEventListener('click', () => stepDiagramZoomY(ZOOM_Y_STEP));
 el.dutyZoomOut.addEventListener('click', () => stepDiagramZoomY(1 / ZOOM_Y_STEP));
 
-// ---------- ダイヤグラムのドラッグ操作（右クリック長押しでパン）・ホイール操作（横方向のみズーム） ----------
+// ---------- ダイヤグラムのドラッグ操作（左右どちらのボタンでもパン）・ホイール操作（横方向のみズーム） ----------
 //
 // OuDiaSecondや一般的な地図/図面ビューアの操作感を参考にした便利機能:
-// 右ボタンを押したままドラッグでスクロール（左クリックは将来の選択操作用に
-// 空けておく）、マウスホイールは縦（駅間隔）を変えず横（時間軸）だけを
-// ズームする（diagramView.mjsのrenderDiagramの`zoomX`引数）。カーソル位置の
-// 時刻がズーム後も画面上の同じ位置に留まるよう、スクロール位置を補正する
-// （地図アプリ等でおなじみの「カーソル位置を中心にズーム」の挙動）。
+// 左右どちらかのボタンを押したままドラッグでスクロール（2026-08-01、
+// 「左ドラッグでもパンできるように」——元は右クリックのみで左は将来の
+// 選択操作用に空けておく方針だったが、選択機能自体が未実装かつSVG側にも
+// クリックで反応する要素が無いため両方に開放した）、マウスホイールは縦
+// （駅間隔）を変えず横（時間軸）だけをズームする（diagramView.mjsの
+// renderDiagramの`zoomX`引数）。カーソル位置の時刻がズーム後も画面上の
+// 同じ位置に留まるよう、スクロール位置を補正する（地図アプリ等でおなじみ
+// の「カーソル位置を中心にズーム」の挙動）。
 // ZOOM_X_MIN/MAXはstate初期化（localStorageからの復元）でも使うため
 // ファイル先頭で定義済み。
 const ZOOM_X_STEP = 1.12; // ホイール1ノッチあたりの倍率
 
 function setupDiagramPanZoom(container) {
   let dragging = false;
+  let dragButton = null;
   let dragStartX = 0;
   let dragStartY = 0;
   let dragStartScrollLeft = 0;
@@ -359,9 +392,13 @@ function setupDiagramPanZoom(container) {
   // メニューは常に抑止する。
   container.addEventListener('contextmenu', (e) => e.preventDefault());
 
+  // 左右どちらのボタンでもパンできる（2026-08-01要望）。左は元々「将来の
+  // 選択操作用に空けておく」方針だったが、まだ選択機能自体が無く、SVG側に
+  // クリックで反応する要素（列車線など）も無いため、今のところ競合しない。
   container.addEventListener('mousedown', (e) => {
-    if (e.button !== 2) return; // 右ボタンのみ
+    if (e.button !== 0 && e.button !== 2) return;
     dragging = true;
+    dragButton = e.button;
     dragStartX = e.clientX;
     dragStartY = e.clientY;
     dragStartScrollLeft = container.scrollLeft;
@@ -377,9 +414,20 @@ function setupDiagramPanZoom(container) {
   });
 
   window.addEventListener('mouseup', (e) => {
-    if (e.button !== 2 || !dragging) return;
+    if (!dragging || e.button !== dragButton) return;
     dragging = false;
+    dragButton = null;
     container.classList.remove('diagram-container--dragging');
+  });
+
+  // どのタブのダイヤグラムを見ても同じ表示範囲になるよう、スクロール位置
+  // もズーム率と同様state共通にする（2026-08-01要望）。上のドラッグ・下の
+  // ホイールズームどちらの経路でもscrollLeft/Topの代入は最終的にここを
+  // 通る（プログラムからの代入でも'scroll'イベントは発火する）ので、
+  // 個別に同期処理を書く必要はない。
+  container.addEventListener('scroll', () => {
+    state.diagramScrollLeft = container.scrollLeft;
+    state.diagramScrollTop = container.scrollTop;
   });
 
   container.addEventListener(
@@ -503,7 +551,7 @@ function dispatchDutyWarningsHtml(brokenDuties) {
 
 function renderDispatchTab() {
   const train = state.diagram.trains.find((t) => t.id === state.dispatchTrainId);
-  renderDiagram(
+  renderDiagramSynced(
     el.dispatchDiagram,
     { stations: state.diagram.line.stations, trains: state.diagram.trains },
     { highlightTrainId: train?.id, adjustedTrain: state.adjustedTrain, ...diagramDisplayOptions() }
@@ -677,7 +725,7 @@ function renderActualTab() {
   el.actualAutoComplete.checked = state.actualAutoComplete;
   el.actualCompareTarget.value = state.actualCompareTarget;
   el.actualCompareNote.textContent = actualCompareNoteText();
-  renderDiagram(
+  renderDiagramSynced(
     el.actualDiagram,
     { stations: state.diagram.line.stations, trains: state.diagram.trains },
     { adjustedTrains: actualAdjustedTrains(), ...diagramDisplayOptions() }
@@ -878,7 +926,7 @@ function dutyListTableHtml() {
 function renderDutyTab() {
   el.dutySegmentTable.innerHTML = dutySegmentTableHtml();
   el.dutyListTable.innerHTML = dutyListTableHtml();
-  renderDiagram(
+  renderDiagramSynced(
     el.dutyDiagram,
     { stations: state.diagram.line.stations, trains: state.diagram.trains },
     { highlightTrainIds: new Set(state.dutyDraft.segments.map((s) => s.trainId)), ...diagramDisplayOptions() }
