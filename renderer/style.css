@@ -194,6 +194,10 @@ main { padding: 20px; }
 
 .diagram-svg { display: block; }
 .diagram-grid-line { stroke: var(--color-border); stroke-width: 1; }
+/* 支線の分岐駅（駅名がリスト後方に再登場する行、issue #6）を目立たせる
+   —— 距離軸上の位置自体は参考画像通り本線の続きに配置したまま、境目だけ
+   分かるように太く・破線にする。 */
+.diagram-grid-line--branch-seam { stroke: var(--color-text-dim); stroke-width: 1.5; stroke-dasharray: 6, 3; }
 /* 10分刻みの補助目盛り。diagramView.mjsがtheme==='classic'の時だけこの要素
    自体を描画する（ダーク/ライトはDOMに存在しない）。OuDiaSecondの実画面
    （Diagram/image/06123.png）は主要目盛り(時)より細かい罫線が破線で入って

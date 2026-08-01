@@ -225,7 +225,13 @@ function stopTableHtml(diagram, { trainOverride } = {}) {
           return stopCellHtml(stop, station, stop === t.stops[0]);
         })
         .join('');
-      return `<tr><th>${station.name}</th>${cells}</tr>`;
+      // branchFromStationId (lib/oudParser.js, issue #6): this row is a
+      // branch's re-listing of an earlier station (same name reappears
+      // further down diagram.line.stations) — label it so it doesn't read
+      // as a stray duplicate row; matches the "（支線）" annotation
+      // renderer/diagramView.mjs adds at the same seam in the diagram.
+      const name = station.branchFromStationId != null ? `${station.name}（支線）` : station.name;
+      return `<tr><th>${name}</th>${cells}</tr>`;
     })
     .join('');
   return header + `<tbody>${rows}</tbody>`;

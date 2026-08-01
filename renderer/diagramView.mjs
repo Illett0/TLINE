@@ -96,42 +96,31 @@ function ensureVisibleOnDark(hex) {
 // Returns an ARRAY OF SEGMENTS (each an array of [x,y] points), not one flat
 // point list — a branching line (e.g. Diagram/高根鉄道TM.oud2's 高岡東 split)
 // is represented in OuDiaSecond by repeating the junction station later in
-// the station list (see NOTES.md「支線・分岐の表現」), so a 支線普通-type
-// train that only serves the branch has stops like
-// [...,{index:1,高岡東,21:08:50},{index:10,高岡東(also!),21:08:50},...] —
-// same instant, station index jumping from 1 to 10. Connecting those two
-// points with a straight line would draw a false diagonal cutting across
-// every station in between (2..9), which it never actually visits — that's
-// exactly the "運行無しのところにも線がある" bug reported against 支線普通.
-// Detected by: two consecutive points whose station *order* (position in
-// `stations`, not raw stationId) differs by more than 1, AND whose station
-// *name* is the same (the repeated-junction signature) — verified against
-// every Diagram/ sample (132 such jumps, all at a real repeated-junction
-// station; every OTHER order jump >1 in the same data has a different
-// station name, i.e. a genuine skip-stop segment that should stay
-// connected). Originally this checked "zero elapsed time" instead of same
-// name, which only caught the 下り(down) direction's 57 cases — 上り(up)
-// trains cross the same junction with a nonzero gap between its two
-// station-list entries (real transfer/reversal time at 高岡東, e.g. ~3min),
-// so the elapsed-time check silently let the false diagonal through for
-// every up-direction 支線普通 train even after the down-direction fix.
+// the station list (see lib/oudParser.js's parseDiagram / branchFromStationId,
+// issue #6), so a 支線普通-type train that only serves the branch has stops
+// like [...,{高岡東,21:08:50},{高岡東(branch continuation!),21:08:50},...].
+// Connecting those two points with a straight line would draw a false
+// diagonal cutting across every station in between, which it never actually
+// visits — that's exactly the "運行無しのところにも線がある" bug reported
+// against 支線普通. Split whenever two consecutive stops are the two sides of
+// a branch seam (branchFromStationId links them either way — a train can
+// cross the junction in either direction) — verified against every
+// Diagram/ sample that this lines up exactly with the previous ad-hoc
+// "order jumps >1 and station name repeats" heuristic this replaced.
 function trainPolylineSegments(train, stations, maxDistanceKm, plotHeight, startHour, hourWidth) {
   const byId = new Map(stations.map((s) => [s.id, s]));
-  const orderById = new Map(stations.map((s, i) => [s.id, i]));
+  const isBranchSeam = (a, b) => a != null && b != null && (a.branchFromStationId === b.id || b.branchFromStationId === a.id);
   const segments = [];
   let current = [];
-  let prevOrder = null;
-  let prevName = null;
+  let prevStation = null;
 
   const pushPoint = (station, seconds) => {
-    const order = orderById.get(station.id);
-    if (prevOrder != null && Math.abs(order - prevOrder) > 1 && station.name === prevName) {
+    if (isBranchSeam(prevStation, station)) {
       if (current.length >= 2) segments.push(current);
       current = [];
     }
     current.push([timeToX(seconds, startHour, hourWidth), distanceToY(station.distanceKm, maxDistanceKm, plotHeight)]);
-    prevOrder = order;
-    prevName = station.name;
+    prevStation = station;
   };
 
   for (const stop of train.stops) {
@@ -504,11 +493,20 @@ export function renderDiagram(
   const svgParts = [];
   svgParts.push(`<svg viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" class="diagram-svg">`);
 
-  // Station horizontal gridlines + labels.
+  // Station horizontal gridlines + labels. A station with branchFromStationId
+  // set (see lib/oudParser.js's parseDiagram, issue #6) is OuDia's way of
+  // encoding a branch: the junction station's name reappears later in the
+  // flat list, and everything below it is the branch — same distanceKm
+  // stacking as the reference rendering (Diagram/image/06123.png), just
+  // called out with a bolder seam line + "（支線）" so it doesn't read as a
+  // stray duplicate row.
   for (const station of stations) {
     const y = distanceToY(station.distanceKm, maxDistanceKm, plotHeight);
-    svgParts.push(`<line x1="${MARGIN.left}" y1="${y}" x2="${MARGIN.left + plotWidth}" y2="${y}" class="diagram-grid-line" />`);
-    svgParts.push(`<text x="${MARGIN.left - 8}" y="${y + 4}" class="diagram-station-label" text-anchor="end">${station.name}</text>`);
+    const isBranchSeam = station.branchFromStationId != null;
+    const gridLineClass = isBranchSeam ? 'diagram-grid-line diagram-grid-line--branch-seam' : 'diagram-grid-line';
+    const label = isBranchSeam ? `${station.name}（支線）` : station.name;
+    svgParts.push(`<line x1="${MARGIN.left}" y1="${y}" x2="${MARGIN.left + plotWidth}" y2="${y}" class="${gridLineClass}" />`);
+    svgParts.push(`<text x="${MARGIN.left - 8}" y="${y + 4}" class="diagram-station-label" text-anchor="end">${label}</text>`);
   }
 
   // Classic theme only: 10-minute minor gridlines between each hour line,
