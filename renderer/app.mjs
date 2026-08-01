@@ -1,6 +1,7 @@
 import { sampleDiagram } from '../data/sampleDiagram.mjs';
 import { renderDiagram, MARGIN } from './diagramView.mjs';
 import { applyDelay, findNewTrackConflicts } from './dispatch.mjs';
+import { segmentTimeRange, findDutyOverlaps } from './duty.mjs';
 import { parseTime, shiftTime, formatTime } from './timeUtils.mjs';
 
 // ローカルタイムゾーンでの今日の日付（YYYY-MM-DD）。<input type="date">の
@@ -59,6 +60,13 @@ const state = {
   showDepotOperationNumbers: true, // 入出庫運番（チェーンが見つからなかった端点の運用番号ラベル）
   showTurnbackOperationNumbers: true, // 折り返し運番（チェーンが見つかった端点の運用番号ラベル）
   showTrainNumbers: true, // 列車番号ラベル
+  // issue #2「仕業」: .oud/.oud2に存在しないTLINE独自データ（duty.mjs doc
+  // comment参照）。`duties`は保存済みの仕業一覧、`dutyDraft`は仕業タブの
+  // フォームで編集中の1件（新規なら`id: null`）。診断: どちらも現在開いて
+  // いるダイヤのtrainId/stationIdを参照するため、loadDiagramで毎回リセット
+  // する（運転整理のadjustedTrain・実績のactualByDateと同じ扱い）。
+  duties: [],
+  dutyDraft: { id: null, name: '', segments: [] },
 };
 
 const el = {
@@ -110,6 +118,16 @@ const el = {
   appToast: document.getElementById('app-toast'),
   appToastMessage: document.getElementById('app-toast-message'),
   appToastClose: document.getElementById('app-toast-close'),
+  dutySegmentForm: document.getElementById('duty-segment-form'),
+  dutySegmentTrain: document.getElementById('duty-segment-train'),
+  dutySegmentFrom: document.getElementById('duty-segment-from'),
+  dutySegmentTo: document.getElementById('duty-segment-to'),
+  dutySegmentTable: document.getElementById('duty-segment-table'),
+  dutySaveForm: document.getElementById('duty-save-form'),
+  dutyName: document.getElementById('duty-name'),
+  dutyNew: document.getElementById('duty-new'),
+  dutyDiagram: document.getElementById('duty-diagram'),
+  dutyListTable: document.getElementById('duty-list-table'),
 };
 
 // ---------- 通知トースト（window.alert()の非モーダル代替。style.cssの
@@ -139,7 +157,7 @@ el.appToastClose.addEventListener('click', () => {
 // 「今見えていない方のタブ」の分は完全に無駄な作業だった。表示中のタブ
 // だけ即座に再描画し、非表示側は「dirty」フラグだけ立てて、実際にその
 // タブに切り替えられた瞬間に描く（結果は同じ、無駄な作業をしないだけ）。
-const dirtyTabs = { plan: false, dispatch: false };
+const dirtyTabs = { plan: false, dispatch: false, duty: false };
 function isTabActive(tabId) {
   return document.getElementById(`tab-${tabId}`).classList.contains('active');
 }
@@ -159,6 +177,7 @@ for (const button of el.tabButtons) {
     const tabId = button.dataset.tab;
     if (tabId === 'plan' && dirtyTabs.plan) renderTabLazy('plan', renderPlanTab);
     if (tabId === 'dispatch' && dirtyTabs.dispatch) renderTabLazy('dispatch', renderDispatchTab);
+    if (tabId === 'duty' && dirtyTabs.duty) renderTabLazy('duty', renderDutyTab);
   });
 }
 
@@ -649,6 +668,165 @@ el.actualAutoComplete.addEventListener('change', () => {
   state.actualAutoComplete = el.actualAutoComplete.checked;
 });
 
+// ---------- 仕業 ----------
+//
+// issue #2。duty.mjsのdocコメント参照——.oud/.oud2に存在しないTLINE独自
+// データなので、計画タブのように取り込むのではなく、既に読み込み済みの
+// 列車から区間（列車1本の一部区間でもよい）を選んで積み上げていく形の
+// フォームで作成する。1つの仕業＝乗車区間のリスト（`state.dutyDraft`が
+// 編集中の1件、確定すると`state.duties`に追加/上書きされる）。
+
+function populateDutySegmentTrainSelect() {
+  el.dutySegmentTrain.innerHTML = state.diagram.trains.map((t) => `<option value="${t.id}">${t.number}</option>`).join('');
+  updateDutySegmentFromOptions();
+}
+
+function stationName(stationId) {
+  return state.diagram.line.stations.find((s) => s.id === stationId)?.name ?? stationId;
+}
+
+function updateDutySegmentFromOptions() {
+  const train = state.diagram.trains.find((t) => t.id === el.dutySegmentTrain.value);
+  if (!train) {
+    el.dutySegmentFrom.innerHTML = '';
+    el.dutySegmentTo.innerHTML = '';
+    return;
+  }
+  el.dutySegmentFrom.innerHTML = train.stops.map((s, i) => `<option value="${i}">${stationName(s.stationId)}</option>`).join('');
+  updateDutySegmentToOptions();
+}
+
+// 降車駅は乗車駅より後の停車だけを選べるようにする（乗務員は列車を逆走
+// できない）。<option value>は列車内の停車index——同名駅の再訪（issue #6
+// の支線等）があっても、fromより後という位置関係だけで正しく絞り込める。
+function updateDutySegmentToOptions() {
+  const train = state.diagram.trains.find((t) => t.id === el.dutySegmentTrain.value);
+  if (!train) return;
+  const fromIndex = Number(el.dutySegmentFrom.value) || 0;
+  el.dutySegmentTo.innerHTML = train.stops
+    .map((s, i) => ({ i, s }))
+    .filter(({ i }) => i > fromIndex)
+    .map(({ i, s }) => `<option value="${i}">${stationName(s.stationId)}</option>`)
+    .join('');
+}
+
+el.dutySegmentTrain.addEventListener('change', updateDutySegmentFromOptions);
+el.dutySegmentFrom.addEventListener('change', updateDutySegmentToOptions);
+
+el.dutySegmentForm.addEventListener('submit', (e) => {
+  e.preventDefault();
+  const train = state.diagram.trains.find((t) => t.id === el.dutySegmentTrain.value);
+  const fromIndex = Number(el.dutySegmentFrom.value);
+  const toIndex = Number(el.dutySegmentTo.value);
+  if (!train || !Number.isInteger(fromIndex) || !Number.isInteger(toIndex) || toIndex <= fromIndex) {
+    showToast('降車駅は乗車駅より後の停車を選んでください。', 'error');
+    return;
+  }
+  const segment = { trainId: train.id, fromStationId: train.stops[fromIndex].stationId, toStationId: train.stops[toIndex].stationId };
+  const candidateSegments = [...state.dutyDraft.segments, segment];
+  if (findDutyOverlaps(candidateSegments, state.diagram.trains).length > 0) {
+    showToast('この区間は既に追加した区間と時刻が重なっています（同じ乗務員が同時に2つの列車には乗れません）。', 'error');
+    return;
+  }
+  state.dutyDraft.segments.push(segment);
+  renderTabLazy('duty', renderDutyTab);
+});
+
+el.dutySegmentTable.addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-remove-index]');
+  if (!btn) return;
+  state.dutyDraft.segments.splice(Number(btn.dataset.removeIndex), 1);
+  renderTabLazy('duty', renderDutyTab);
+});
+
+el.dutySaveForm.addEventListener('submit', (e) => {
+  e.preventDefault();
+  const name = el.dutyName.value.trim();
+  if (!name) {
+    showToast('仕業番号／名称を入力してください。', 'error');
+    return;
+  }
+  if (state.dutyDraft.segments.length === 0) {
+    showToast('区間を1つ以上追加してください。', 'error');
+    return;
+  }
+  const id = state.dutyDraft.id || `duty-${crypto.randomUUID()}`;
+  const duty = { id, name, segments: state.dutyDraft.segments };
+  const existingIndex = state.duties.findIndex((d) => d.id === id);
+  if (existingIndex === -1) state.duties.push(duty);
+  else state.duties[existingIndex] = duty;
+  state.dutyDraft = { id: null, name: '', segments: [] };
+  el.dutyName.value = '';
+  showToast(`仕業「${name}」を保存しました。`, 'info');
+  renderTabLazy('duty', renderDutyTab);
+});
+
+el.dutyNew.addEventListener('click', () => {
+  state.dutyDraft = { id: null, name: '', segments: [] };
+  el.dutyName.value = '';
+  renderTabLazy('duty', renderDutyTab);
+});
+
+el.dutyListTable.addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-duty-id]');
+  if (!btn) return;
+  const duty = state.duties.find((d) => d.id === btn.dataset.dutyId);
+  if (!duty) return;
+  if (btn.dataset.action === 'edit') {
+    state.dutyDraft = { id: duty.id, name: duty.name, segments: [...duty.segments] };
+    el.dutyName.value = duty.name;
+  } else if (btn.dataset.action === 'delete') {
+    state.duties = state.duties.filter((d) => d.id !== duty.id);
+    if (state.dutyDraft.id === duty.id) {
+      state.dutyDraft = { id: null, name: '', segments: [] };
+      el.dutyName.value = '';
+    }
+  }
+  renderTabLazy('duty', renderDutyTab);
+});
+
+function dutySegmentTableHtml() {
+  const header = '<thead><tr><th>列車</th><th>区間</th><th>時刻</th><th></th></tr></thead>';
+  if (state.dutyDraft.segments.length === 0) return `${header}<tbody><tr><td colspan="4">区間はまだありません</td></tr></tbody>`;
+  const rows = state.dutyDraft.segments
+    .map((s, i) => {
+      const train = state.diagram.trains.find((t) => t.id === s.trainId);
+      const range = segmentTimeRange(s, state.diagram.trains);
+      const timeText = range ? `${formatTime(range.start)}〜${formatTime(range.end)}` : '—';
+      return `<tr><td>${train ? train.number : s.trainId}</td><td>${stationName(s.fromStationId)} → ${stationName(s.toStationId)}</td><td>${timeText}</td><td><button type="button" data-remove-index="${i}">削除</button></td></tr>`;
+    })
+    .join('');
+  return `${header}<tbody>${rows}</tbody>`;
+}
+
+function dutyListTableHtml() {
+  const header = '<thead><tr><th>仕業</th><th>区間数</th><th>時間帯</th><th></th></tr></thead>';
+  if (state.duties.length === 0) return `${header}<tbody><tr><td colspan="4">まだ仕業が登録されていません</td></tr></tbody>`;
+  const rows = state.duties
+    .map((duty) => {
+      const ranges = duty.segments.map((s) => segmentTimeRange(s, state.diagram.trains)).filter(Boolean);
+      const span = ranges.length
+        ? `${formatTime(Math.min(...ranges.map((r) => r.start)))}〜${formatTime(Math.max(...ranges.map((r) => r.end)))}`
+        : '—';
+      return `<tr><td>${duty.name}</td><td>${duty.segments.length}区間</td><td>${span}</td><td><button type="button" data-action="edit" data-duty-id="${duty.id}">編集</button> <button type="button" data-action="delete" data-duty-id="${duty.id}">削除</button></td></tr>`;
+    })
+    .join('');
+  return `${header}<tbody>${rows}</tbody>`;
+}
+
+// ダイヤグラムは編集中の仕業（dutyDraft）に含まれる列車を丸ごとハイライト
+// する（区間の一部だけを強調する精密な描画はしていない——列車のどの区間が
+// 対象かはダイヤグラム下の表で確認する想定）。
+function renderDutyTab() {
+  el.dutySegmentTable.innerHTML = dutySegmentTableHtml();
+  el.dutyListTable.innerHTML = dutyListTableHtml();
+  renderDiagram(
+    el.dutyDiagram,
+    { stations: state.diagram.line.stations, trains: state.diagram.trains },
+    { highlightTrainIds: new Set(state.dutyDraft.segments.map((s) => s.trainId)), ...diagramDisplayOptions() }
+  );
+}
+
 // ---------- ファイル操作（開く・保存・最近使ったファイル） ----------
 //
 // 独自の .tline 形式（計画データの line/trains をそのまま
@@ -702,12 +880,17 @@ function loadDiagram(diagram, filePath, description) {
   state.actualByDate = new Map();
   state.actualDate = todayDateString();
   state.actualCompareTarget = 'plan';
+  state.duties = [];
+  state.dutyDraft = { id: null, name: '', segments: [] };
+  el.dutyName.value = '';
 
   updateFileLabel();
   renderTabLazy('plan', renderPlanTab);
   populateDispatchSelectors();
   renderTabLazy('dispatch', renderDispatchTab);
   renderActualTab();
+  populateDutySegmentTrainSelect();
+  renderTabLazy('duty', renderDutyTab);
 }
 
 // 運転整理・実績の保存形式（issue #3、確定）: 計画(line/trains)と同じ.tline
@@ -722,6 +905,8 @@ function loadDiagram(diagram, filePath, description) {
 //   { "YYYY-MM-DD": { "trainId:stationId": { arrival, departure, manualArrival?, manualDeparture? } } }
 //   旧形式（日付なしの`actual`キー）は読み込みのみ後方互換で対応
 //   （restoreOpsExtras参照）、保存は常に新形式で行う。
+// - duties: 仕業タブで作成した仕業一覧（issue #2、duty.mjs参照）。
+//   [{ id, name, segments: [{ trainId, fromStationId, toStationId }] }]
 function buildSavePayload() {
   const payload = { line: state.diagram.line, trains: state.diagram.trains };
   if (state.adjustedTrain) {
@@ -733,6 +918,7 @@ function buildSavePayload() {
     actualByDate[date] = Object.fromEntries(map);
   }
   if (Object.keys(actualByDate).length > 0) payload.actualByDate = actualByDate;
+  if (state.duties.length > 0) payload.duties = state.duties; // 仕業（issue #2、TLINE独自データ）
   return payload;
 }
 
@@ -770,6 +956,8 @@ function restoreOpsExtras(loaded) {
     state.actualByDate = new Map([[state.actualDate, new Map(entries)]]);
   }
   renderActualTab();
+  if (loaded.duties) state.duties = loaded.duties;
+  renderTabLazy('duty', renderDutyTab);
 }
 
 // 最近使ったファイルの一覧をpath->entryで保持（.oud/.oud2再選択時にkindで
@@ -915,4 +1103,6 @@ renderTabLazy('plan', renderPlanTab);
 populateDispatchSelectors();
 renderTabLazy('dispatch', renderDispatchTab);
 renderActualTab();
+populateDutySegmentTrainSelect();
+renderTabLazy('duty', renderDutyTab);
 refreshRecentFiles();

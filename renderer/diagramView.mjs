@@ -470,6 +470,7 @@ export function renderDiagram(
   { stations, trains },
   {
     highlightTrainId,
+    highlightTrainIds, // optional Set<trainId> — issue #2's 仕業タブ highlights every train in the duty being edited, not just one
     adjustedTrain,
     zoomY = 1,
     zoomX = 1,
@@ -543,7 +544,7 @@ export function renderDiagram(
   for (const train of trains) {
     const segments = trainPolylineSegments(train, stations, maxDistanceKm, plotHeight, startHour, hourWidth);
     if (segments.length === 0) continue;
-    const isHighlighted = train.id === highlightTrainId;
+    const isHighlighted = train.id === highlightTrainId || (highlightTrainIds != null && highlightTrainIds.has(train.id));
     // Color/style by train type (OuDiaSecond's own Ressyasyubetsu — 普通/
     // 急行/回送 etc., each with its own diagram line color; see NOTES.md
     // 「種別ごとの色分け」). Falls back to the plain default (no inline

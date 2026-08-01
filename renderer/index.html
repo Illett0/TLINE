@@ -13,6 +13,7 @@
       <button class="tab-button active" data-tab="plan">計画</button>
       <button class="tab-button" data-tab="dispatch">運転整理</button>
       <button class="tab-button" data-tab="actual">実績</button>
+      <button class="tab-button" data-tab="duty">仕業</button>
     </nav>
     <div id="file-toolbar">
       <select id="theme-select" title="テーマ切り替え">
@@ -124,6 +125,38 @@
       </form>
       <p class="panel-note" id="actual-compare-note"></p>
       <div class="stop-table-scroll"><table id="actual-table" class="stop-table"></table></div>
+    </section>
+
+    <section id="tab-duty" class="tab-panel">
+      <h2>仕業</h2>
+      <p class="panel-note">仕業（乗務員が担当する列車のつながり）は.oud/.oud2ファイルには存在しないデータのため、TLINE独自の機能としてここで作成・編集します（.tlineファイル内に保存、取り込み対象外）。運用と違い、乗務員は途中で別の列車に乗り換えられるので、区間ごとに列車を選んで追加していきます。</p>
+      <form id="duty-segment-form" class="dispatch-form">
+        <label>
+          列車
+          <select id="duty-segment-train"></select>
+        </label>
+        <label>
+          乗車駅
+          <select id="duty-segment-from"></select>
+        </label>
+        <label>
+          降車駅
+          <select id="duty-segment-to"></select>
+        </label>
+        <button type="submit">区間を追加</button>
+      </form>
+      <div class="stop-table-scroll"><table id="duty-segment-table" class="stop-table"></table></div>
+      <form id="duty-save-form" class="dispatch-form">
+        <label>
+          仕業番号／名称
+          <input id="duty-name" type="text" placeholder="例: 2N" />
+        </label>
+        <button type="submit">この仕業を保存</button>
+        <button type="button" id="duty-new">新規仕業</button>
+      </form>
+      <div id="duty-diagram" class="diagram-container"></div>
+      <h3>登録済みの仕業</h3>
+      <div class="stop-table-scroll"><table id="duty-list-table" class="stop-table"></table></div>
     </section>
   </main>
 
