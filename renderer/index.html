@@ -124,6 +124,16 @@
         <label><input type="checkbox" id="actual-autocomplete" checked /> 遅延の自動補完（入力駅以降へ反映）</label>
       </form>
       <p class="panel-note" id="actual-compare-note"></p>
+      <div class="diagram-zoom-control">
+        <span class="diagram-zoom-vertical">
+          縦
+          <button type="button" id="actual-zoom-out" title="縦方向（駅間隔）を縮小">－</button>
+          <span id="actual-zoom-label">100%</span>
+          <button type="button" id="actual-zoom-in" title="縦方向（駅間隔）を拡大">＋</button>
+        </span>
+        <span class="diagram-zoom-hint">横方向はダイヤグラム上でマウスホイール／右ドラッグでパン（ズーム率はタブ間で共通です）</span>
+      </div>
+      <div id="actual-diagram" class="diagram-container"></div>
       <div class="stop-table-scroll"><table id="actual-table" class="stop-table"></table></div>
     </section>
 
@@ -154,6 +164,15 @@
         <button type="submit">この仕業を保存</button>
         <button type="button" id="duty-new">新規仕業</button>
       </form>
+      <div class="diagram-zoom-control">
+        <span class="diagram-zoom-vertical">
+          縦
+          <button type="button" id="duty-zoom-out" title="縦方向（駅間隔）を縮小">－</button>
+          <span id="duty-zoom-label">100%</span>
+          <button type="button" id="duty-zoom-in" title="縦方向（駅間隔）を拡大">＋</button>
+        </span>
+        <span class="diagram-zoom-hint">横方向はダイヤグラム上でマウスホイール／右ドラッグでパン（ズーム率はタブ間で共通です）</span>
+      </div>
       <div id="duty-diagram" class="diagram-container"></div>
       <h3>登録済みの仕業</h3>
       <div class="stop-table-scroll"><table id="duty-list-table" class="stop-table"></table></div>

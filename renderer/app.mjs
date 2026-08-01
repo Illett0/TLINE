@@ -89,6 +89,13 @@ const el = {
   dispatchZoomIn: document.getElementById('dispatch-zoom-in'),
   dispatchZoomOut: document.getElementById('dispatch-zoom-out'),
   dispatchZoomLabel: document.getElementById('dispatch-zoom-label'),
+  actualZoomIn: document.getElementById('actual-zoom-in'),
+  actualZoomOut: document.getElementById('actual-zoom-out'),
+  actualZoomLabel: document.getElementById('actual-zoom-label'),
+  actualDiagram: document.getElementById('actual-diagram'),
+  dutyZoomIn: document.getElementById('duty-zoom-in'),
+  dutyZoomOut: document.getElementById('duty-zoom-out'),
+  dutyZoomLabel: document.getElementById('duty-zoom-label'),
   themeSelect: document.getElementById('theme-select'),
   planShowDepot: document.getElementById('plan-show-depot'),
   planShowChainLink: document.getElementById('plan-show-chainlink'),
@@ -157,7 +164,7 @@ el.appToastClose.addEventListener('click', () => {
 // 「今見えていない方のタブ」の分は完全に無駄な作業だった。表示中のタブ
 // だけ即座に再描画し、非表示側は「dirty」フラグだけ立てて、実際にその
 // タブに切り替えられた瞬間に描く（結果は同じ、無駄な作業をしないだけ）。
-const dirtyTabs = { plan: false, dispatch: false, duty: false };
+const dirtyTabs = { plan: false, dispatch: false, actual: false, duty: false };
 function isTabActive(tabId) {
   return document.getElementById(`tab-${tabId}`).classList.contains('active');
 }
@@ -177,6 +184,7 @@ for (const button of el.tabButtons) {
     const tabId = button.dataset.tab;
     if (tabId === 'plan' && dirtyTabs.plan) renderTabLazy('plan', renderPlanTab);
     if (tabId === 'dispatch' && dirtyTabs.dispatch) renderTabLazy('dispatch', renderDispatchTab);
+    if (tabId === 'actual' && dirtyTabs.actual) renderTabLazy('actual', renderActualTab);
     if (tabId === 'duty' && dirtyTabs.duty) renderTabLazy('duty', renderDutyTab);
   });
 }
@@ -287,6 +295,8 @@ function updateDiagramControls() {
   const zoomLabel = `${Math.round(state.diagramZoomY * 100)}%`;
   el.planZoomLabel.textContent = zoomLabel;
   el.dispatchZoomLabel.textContent = zoomLabel;
+  el.actualZoomLabel.textContent = zoomLabel;
+  el.dutyZoomLabel.textContent = zoomLabel;
   el.planShowDepot.checked = state.showDepotMarkers;
   el.dispatchShowDepot.checked = state.showDepotMarkers;
   el.planShowChainLink.checked = state.showChainLines;
@@ -313,12 +323,18 @@ function stepDiagramZoomY(factor) {
   updateDiagramControls();
   renderTabLazy('plan', renderPlanTab);
   renderTabLazy('dispatch', renderDispatchTab);
+  renderTabLazy('actual', renderActualTab);
+  renderTabLazy('duty', renderDutyTab);
 }
 
 el.planZoomIn.addEventListener('click', () => stepDiagramZoomY(ZOOM_Y_STEP));
 el.planZoomOut.addEventListener('click', () => stepDiagramZoomY(1 / ZOOM_Y_STEP));
 el.dispatchZoomIn.addEventListener('click', () => stepDiagramZoomY(ZOOM_Y_STEP));
 el.dispatchZoomOut.addEventListener('click', () => stepDiagramZoomY(1 / ZOOM_Y_STEP));
+el.actualZoomIn.addEventListener('click', () => stepDiagramZoomY(ZOOM_Y_STEP));
+el.actualZoomOut.addEventListener('click', () => stepDiagramZoomY(1 / ZOOM_Y_STEP));
+el.dutyZoomIn.addEventListener('click', () => stepDiagramZoomY(ZOOM_Y_STEP));
+el.dutyZoomOut.addEventListener('click', () => stepDiagramZoomY(1 / ZOOM_Y_STEP));
 
 // ---------- ダイヤグラムのドラッグ操作（右クリック長押しでパン）・ホイール操作（横方向のみズーム） ----------
 //
@@ -388,6 +404,8 @@ function setupDiagramPanZoom(container) {
       localStorage.setItem('tline-zoom-x', String(state.diagramZoomX));
       renderTabLazy('plan', renderPlanTab);
       renderTabLazy('dispatch', renderDispatchTab);
+      renderTabLazy('actual', renderActualTab);
+      renderTabLazy('duty', renderDutyTab);
 
       container.scrollLeft = newCursorContentX - cursorClientX;
     },
@@ -397,6 +415,8 @@ function setupDiagramPanZoom(container) {
 
 setupDiagramPanZoom(el.planDiagram);
 setupDiagramPanZoom(el.dispatchDiagram);
+setupDiagramPanZoom(el.actualDiagram);
+setupDiagramPanZoom(el.dutyDiagram);
 
 // 入出庫・運用系5トグルの共通ハンドラ生成。それぞれ独立に効くので、まとめて
 // 1つの関数で作る（issue #10、2026-07-14の5分割）。
@@ -619,11 +639,37 @@ function actualCompareNoteText() {
   return `「${state.adjustedTrain.number}」のみ運転整理後のダイヤと比較しています（他の列車は計画のままです）。`;
 }
 
+// 実績タブのダイヤグラム用オーバーレイ列車一覧（2026-08-01要望「実績も
+// 実績ダイヤグラムをオーバーレイで描画したい」）。運転整理タブの
+// adjustedTrain（1列車のみ）と違い、実績はどの列車にも入力されうるため、
+// 表示中の運転日に実績セルを1つでも持つ列車をすべて対象にする（未入力の
+// セルはactualTableHtmlと同じくbaseline＝計画/整理後の時刻のまま）。
+function actualAdjustedTrains() {
+  const actualMap = actualMapForCurrentDate();
+  const result = [];
+  for (const train of state.diagram.trains) {
+    const baseline = actualBaselineFor(train);
+    const hasAnyActual = baseline.stops.some((stop) => actualMap.has(`${train.id}:${stop.stationId}`));
+    if (!hasAnyActual) continue;
+    const stops = baseline.stops.map((stop) => {
+      const entry = actualMap.get(`${train.id}:${stop.stationId}`);
+      return { ...stop, arrival: entry?.arrival ?? stop.arrival, departure: entry?.departure ?? stop.departure };
+    });
+    result.push({ ...train, stops });
+  }
+  return result;
+}
+
 function renderActualTab() {
   el.actualDate.value = state.actualDate;
   el.actualAutoComplete.checked = state.actualAutoComplete;
   el.actualCompareTarget.value = state.actualCompareTarget;
   el.actualCompareNote.textContent = actualCompareNoteText();
+  renderDiagram(
+    el.actualDiagram,
+    { stations: state.diagram.line.stations, trains: state.diagram.trains },
+    { adjustedTrains: actualAdjustedTrains(), ...diagramDisplayOptions() }
+  );
   el.actualTable.innerHTML = actualTableHtml();
   el.actualTable.querySelectorAll('input').forEach((input) => {
     input.addEventListener('change', () => {

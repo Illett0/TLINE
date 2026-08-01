@@ -471,7 +471,8 @@ export function renderDiagram(
   {
     highlightTrainId,
     highlightTrainIds, // optional Set<trainId> — issue #2's 仕業タブ highlights every train in the duty being edited, not just one
-    adjustedTrain,
+    adjustedTrain, // single overlay (運転整理タブ)
+    adjustedTrains, // optional array of overlays (実績タブ — every train with an actual entry on the viewed date, not just one)
     zoomY = 1,
     zoomX = 1,
     theme = 'dark',
@@ -482,10 +483,11 @@ export function renderDiagram(
     showTrainNumbers = true,
   } = {}
 ) {
+  const allAdjustedTrains = adjustedTrain ? [adjustedTrain, ...(adjustedTrains || [])] : adjustedTrains || [];
   const maxDistanceKm = Math.max(...stations.map((s) => s.distanceKm), 1);
   const plotHeight = Math.max(200, stations.length * 60 * zoomY);
   const hourWidth = HOUR_WIDTH * zoomX;
-  const { startHour, endHour } = computeHourRange(adjustedTrain ? [...trains, adjustedTrain] : trains);
+  const { startHour, endHour } = computeHourRange(allAdjustedTrains.length ? [...trains, ...allAdjustedTrains] : trains);
   const plotWidth = (endHour - startHour) * hourWidth;
   const width = MARGIN.left + plotWidth + MARGIN.right;
   const height = MARGIN.top + plotHeight + MARGIN.bottom;
@@ -680,16 +682,17 @@ export function renderDiagram(
     }
   }
 
-  // The 運転整理-shifted version of one train, overlaid dashed on top of its
-  // (still-visible) original plan line — so the delay's effect is visible at
-  // a glance rather than replacing the plan outright.
-  if (adjustedTrain) {
-    const segments = trainPolylineSegments(adjustedTrain, stations, maxDistanceKm, plotHeight, startHour, hourWidth);
+  // The 運転整理-shifted version of one train (adjustedTrain) and/or every
+  // train with an 実績 entry on the viewed date (adjustedTrains, issue #2's
+  // follow-up request — "実績タブも実績ダイヤグラムをオーバーレイで描画
+  // したい"), each overlaid dashed on top of its (still-visible) original
+  // plan line — so the deviation is visible at a glance rather than
+  // replacing the plan outright.
+  for (const at of allAdjustedTrains) {
+    const segments = trainPolylineSegments(at, stations, maxDistanceKm, plotHeight, startHour, hourWidth);
     for (const points of segments) {
       const d = points.map((p) => p.join(',')).join(' ');
-      svgParts.push(
-        `<polyline points="${d}" class="diagram-train-line diagram-train-line--adjusted" data-train-id="${adjustedTrain.id}" />`
-      );
+      svgParts.push(`<polyline points="${d}" class="diagram-train-line diagram-train-line--adjusted" data-train-id="${at.id}" />`);
     }
   }
 
