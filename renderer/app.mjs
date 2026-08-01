@@ -1,7 +1,7 @@
 import { sampleDiagram } from '../data/sampleDiagram.mjs';
 import { renderDiagram, MARGIN } from './diagramView.mjs';
 import { applyDelay, findNewTrackConflicts } from './dispatch.mjs';
-import { segmentTimeRange, findDutyOverlaps } from './duty.mjs';
+import { segmentTimeRange, findDutyOverlaps, findDutiesBrokenByAdjustment } from './duty.mjs';
 import { parseTime, shiftTime, formatTime } from './timeUtils.mjs';
 
 // ローカルタイムゾーンでの今日の日付（YYYY-MM-DD）。<input type="date">の
@@ -490,6 +490,17 @@ function dispatchConflictsHtml(conflicts) {
   return `<div class="dispatch-conflicts-warning">⚠ この調整で新たに${conflicts.length}件の番線競合が発生します<ul>${items}</ul></div>`;
 }
 
+// 仕業「調整機能」（issue #2続報、2026-08-01）— duty.mjsのfindDutiesBroken
+// ByAdjustmentのdocコメント参照。仕業は参照している列車の時刻をそのつど
+// 引くだけなので、運転整理の遅延が仕業を「乗り継ぎ不能」にしていないかを
+// 警告する形が実質的な「調整」チェックになる。dispatchConflictsHtmlと
+// 同じ「調整前には無かった問題だけを報告する」設計。
+function dispatchDutyWarningsHtml(brokenDuties) {
+  if (brokenDuties.length === 0) return '';
+  const items = brokenDuties.map((d) => `<li>仕業「${d.name}」— 区間の乗り継ぎ時刻が重なり、成立しなくなります</li>`).join('');
+  return `<div class="dispatch-conflicts-warning">⚠ この調整で${brokenDuties.length}件の仕業が乗り継ぎ不能になります<ul>${items}</ul></div>`;
+}
+
 function renderDispatchTab() {
   const train = state.diagram.trains.find((t) => t.id === state.dispatchTrainId);
   renderDiagram(
@@ -499,7 +510,8 @@ function renderDispatchTab() {
   );
   el.dispatchTable.innerHTML = state.adjustedTrain ? stopTableHtml(state.diagram, { trainOverride: state.adjustedTrain }) : stopTableHtml(state.diagram);
   const conflicts = state.adjustedTrain ? findNewTrackConflicts(state.diagram.trains, state.adjustedTrain) : [];
-  el.dispatchConflicts.innerHTML = dispatchConflictsHtml(conflicts);
+  const brokenDuties = state.adjustedTrain ? findDutiesBrokenByAdjustment(state.duties, state.diagram.trains, state.adjustedTrain) : [];
+  el.dispatchConflicts.innerHTML = dispatchConflictsHtml(conflicts) + dispatchDutyWarningsHtml(brokenDuties);
 }
 
 el.dispatchTrain.addEventListener('change', () => {

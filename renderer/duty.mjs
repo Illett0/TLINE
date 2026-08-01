@@ -52,3 +52,23 @@ export function findDutyOverlaps(segments, trains) {
   }
   return overlaps;
 }
+
+// 仕業の「調整機能」— a duty's segments don't carry their own time, they
+// resolve it by looking up whichever train they reference (segmentTimeRange
+// above), so there's no independent schedule to shift the way 運転整理's
+// applyDelay shifts a train. What a delay *can* do is make a duty
+// infeasible: delay train A enough and its segment now overlaps the next
+// segment's train B (the crew can no longer be at both places). Diffs
+// against the un-adjusted baseline exactly like dispatch.mjs's
+// findNewTrackConflicts (issue #4) — a duty that already had an overlap
+// before this delay isn't this delay's fault and isn't reported again, only
+// duties the delay newly breaks are.
+export function findDutiesBrokenByAdjustment(duties, baseTrains, adjustedTrain) {
+  const adjustedTrains = baseTrains.map((t) => (t.id === adjustedTrain.id ? adjustedTrain : t));
+  return duties.filter((duty) => {
+    if (!duty.segments.some((s) => s.trainId === adjustedTrain.id)) return false; // this duty doesn't touch the delayed train at all
+    const wasOk = findDutyOverlaps(duty.segments, baseTrains).length === 0;
+    const isOkNow = findDutyOverlaps(duty.segments, adjustedTrains).length === 0;
+    return wasOk && !isOkNow;
+  });
+}
