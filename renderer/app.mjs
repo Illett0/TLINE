@@ -1,7 +1,7 @@
 import { sampleDiagram } from '../data/sampleDiagram.mjs';
 import { renderDiagram, MARGIN } from './diagramView.mjs';
-import { applyDelay } from './dispatch.mjs';
-import { parseTime, shiftTime } from './timeUtils.mjs';
+import { applyDelay, findNewTrackConflicts } from './dispatch.mjs';
+import { parseTime, shiftTime, formatTime } from './timeUtils.mjs';
 
 // ローカルタイムゾーンでの今日の日付（YYYY-MM-DD）。<input type="date">の
 // value形式に合わせる。toISOString()はUTC基準で日本の早朝に前日へずれる
@@ -72,6 +72,7 @@ const el = {
   dispatchStation: document.getElementById('dispatch-station'),
   dispatchDelta: document.getElementById('dispatch-delta'),
   dispatchReset: document.getElementById('dispatch-reset'),
+  dispatchConflicts: document.getElementById('dispatch-conflicts'),
   dispatchDiagram: document.getElementById('dispatch-diagram'),
   dispatchTable: document.getElementById('dispatch-table'),
   planZoomIn: document.getElementById('plan-zoom-in'),
@@ -429,6 +430,27 @@ function updateDispatchStationOptions() {
   el.dispatchStation.value = state.dispatchStationId;
 }
 
+// issue #4「運転整理の競合検知」— findNewTrackConflicts（renderer/dispatch.mjs）
+// が返す「調整前には無かった番線の重なり」だけを一覧表示する。調整前から
+// 存在する重なり（増解結等、正規の可能性がある）は対象外——このチェックが
+// 答える問いは「今回の調整で何か壊れたか」だけで、ダイヤ全体の健全性検証
+// ではない。
+function dispatchConflictsHtml(conflicts) {
+  if (conflicts.length === 0) return '';
+  const stationById = new Map(state.diagram.line.stations.map((s) => [s.id, s]));
+  const trainById = new Map(state.diagram.trains.map((t) => [t.id, t]));
+  const items = conflicts
+    .map((c) => {
+      const station = stationById.get(c.stationId);
+      const a = trainById.get(c.trainAId);
+      const b = trainById.get(c.trainBId);
+      const track = c.trackLabel ? `${c.trackLabel}番線` : `番線${c.track}`;
+      return `<li>${station ? station.name : c.stationId} ${track}: 「${a ? a.number : c.trainAId}」と「${b ? b.number : c.trainBId}」の時刻が重なります（${formatTime(c.overlapStart)}〜${formatTime(c.overlapEnd)}）</li>`;
+    })
+    .join('');
+  return `<div class="dispatch-conflicts-warning">⚠ この調整で新たに${conflicts.length}件の番線競合が発生します<ul>${items}</ul></div>`;
+}
+
 function renderDispatchTab() {
   const train = state.diagram.trains.find((t) => t.id === state.dispatchTrainId);
   renderDiagram(
@@ -437,6 +459,8 @@ function renderDispatchTab() {
     { highlightTrainId: train?.id, adjustedTrain: state.adjustedTrain, ...diagramDisplayOptions() }
   );
   el.dispatchTable.innerHTML = state.adjustedTrain ? stopTableHtml(state.diagram, { trainOverride: state.adjustedTrain }) : stopTableHtml(state.diagram);
+  const conflicts = state.adjustedTrain ? findNewTrackConflicts(state.diagram.trains, state.adjustedTrain) : [];
+  el.dispatchConflicts.innerHTML = dispatchConflictsHtml(conflicts);
 }
 
 el.dispatchTrain.addEventListener('change', () => {
