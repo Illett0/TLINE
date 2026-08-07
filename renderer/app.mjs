@@ -1,7 +1,14 @@
 import { sampleDiagram } from '../data/sampleDiagram.mjs';
-import { renderDiagram, MARGIN } from './diagramView.mjs';
+import { renderDiagram, MARGIN, ensureVisibleOnDark } from './diagramView.mjs';
 import { applyDelay, findNewTrackConflicts } from './dispatch.mjs';
-import { segmentTimeRange, findDutyOverlaps, findDutiesBrokenByAdjustment } from './duty.mjs';
+import {
+  segmentTimeRange,
+  findDutyOverlaps,
+  findDutiesBrokenByAdjustment,
+  findDutyBufferViolations,
+  findDutiesWithNewBufferViolations,
+  findDutySwapSuggestions,
+} from './duty.mjs';
 import { parseTime, shiftTime, formatTime } from './timeUtils.mjs';
 
 // ローカルタイムゾーンでの今日の日付（YYYY-MM-DD）。<input type="date">の
@@ -68,13 +75,18 @@ const state = {
   showDepotOperationNumbers: true, // 入出庫運番（チェーンが見つからなかった端点の運用番号ラベル）
   showTurnbackOperationNumbers: true, // 折り返し運番（チェーンが見つかった端点の運用番号ラベル）
   showTrainNumbers: true, // 列車番号ラベル
+  // タイムテーブル（stopTableHtml）の上り/下り切り替え（2026-08-08要望）。
+  // 計画・運転整理タブ共通（ズーム等と同様、どちらのタブで切り替えても
+  // 他方に反映される）。'down'（下り）をデフォルトにする明確な理由は
+  // 無いが、trainのdirection既定値と揃えておく。
+  timetableDirection: 'down',
   // issue #2「仕業」: .oud/.oud2に存在しないTLINE独自データ（duty.mjs doc
   // comment参照）。`duties`は保存済みの仕業一覧、`dutyDraft`は仕業タブの
   // フォームで編集中の1件（新規なら`id: null`）。診断: どちらも現在開いて
   // いるダイヤのtrainId/stationIdを参照するため、loadDiagramで毎回リセット
   // する（運転整理のadjustedTrain・実績のactualByDateと同じ扱い）。
   duties: [],
-  dutyDraft: { id: null, name: '', segments: [] },
+  dutyDraft: { id: null, name: '', segments: [], minConnectionSeconds: null },
 };
 
 const el = {
@@ -97,6 +109,10 @@ const el = {
   dispatchZoomIn: document.getElementById('dispatch-zoom-in'),
   dispatchZoomOut: document.getElementById('dispatch-zoom-out'),
   dispatchZoomLabel: document.getElementById('dispatch-zoom-label'),
+  planDirectionDown: document.getElementById('plan-direction-down'),
+  planDirectionUp: document.getElementById('plan-direction-up'),
+  dispatchDirectionDown: document.getElementById('dispatch-direction-down'),
+  dispatchDirectionUp: document.getElementById('dispatch-direction-up'),
   actualZoomIn: document.getElementById('actual-zoom-in'),
   actualZoomOut: document.getElementById('actual-zoom-out'),
   actualZoomLabel: document.getElementById('actual-zoom-label'),
@@ -140,6 +156,8 @@ const el = {
   dutySegmentTable: document.getElementById('duty-segment-table'),
   dutySaveForm: document.getElementById('duty-save-form'),
   dutyName: document.getElementById('duty-name'),
+  dutyBuffer: document.getElementById('duty-buffer'),
+  dutyBufferWarnings: document.getElementById('duty-buffer-warnings'),
   dutyNew: document.getElementById('duty-new'),
   dutyDiagram: document.getElementById('duty-diagram'),
   dutyListTable: document.getElementById('duty-list-table'),
@@ -227,20 +245,47 @@ for (const button of el.tabButtons) {
 // Blanked here rather than reinterpreted, matching the ordinary empty-cell
 // case elsewhere in this table — no extra centering/consolidation for the
 // single remaining value (project owner: 中央揃えは不要、ないものは普通に空欄).
-function stopCellHtml(stop, station, isOrigin) {
-  if (!stop) return '<td class="stop-cell">—</td>';
-  const arr = isOrigin ? '' : stop.arrival ?? '';
-  const dep = stop.departure ?? '';
+// ダイヤグラム（renderer/diagramView.mjs）と同じ理由——OuDiaSecondの色は
+// 白背景前提で、普通(local)の黒などダークテーマの暗い背景では見えない
+// ——でensureVisibleOnDarkを噛ませる。ライト/クラシックはそのまま。
+function resolveTrainColor(hex) {
+  if (!hex) return null;
+  return state.theme === 'dark' ? ensureVisibleOnDark(hex) : hex;
+}
+
+// `color` — 列車種別色（resolveTrainColor適用済み、なければnull）。CSS
+// カスタムプロパティとして渡し、style.cssの`--train-color`ルールで文字色
+// に反映する（2026-08-08要望「タイムテーブルも各種別色を文字色として反映」）。
+// インラインstyleでcolorを直接指定すると、stop-cell--passの薄グレー
+// クラスより詳細度が高くなって上書きしてしまう（通過駅は種別色より薄グレー
+// 優先にしたい）ため、カスタムプロパティ経由で通常のクラス指定と同じ詳細度
+// に揃えている。
+function stopCellHtml(stop, station, isOrigin, color) {
+  // 通過駅（駅扱いコード=2、lib/oudParser.jsのstopTypeFromCode参照）。着=発が
+  // 同時刻になる単一時刻の停車と見た目上区別できなかったのを、コード自体を
+  // 解読することで初めて判別できるようになった（2026-08-08要望）。薄いグレー
+  // 表示にし（stop-cell--passクラス、style.css）、時刻が無い場合（稀——通過
+  // コードはあるが時刻トークン自体が空、decodeEkiJikoku参照）は「駅を通らな
+  // い」（マスが完全に空欄）と区別するため「レ」を表示する。
+  const isPass = stop?.stopType === 'pass';
+  const timeOrPassMark = (value) => value || (isPass ? 'レ' : '');
+  const arr = stop && !isOrigin ? timeOrPassMark(stop.arrival) : '';
+  const dep = stop ? timeOrPassMark(stop.departure) : '';
+  const passClass = isPass ? ' stop-cell--pass' : '';
+  const colorStyle = color ? ` style="--train-color:${color}"` : '';
 
   if (station.scale === 'general') {
     // 一般駅は停車時分が短い前提で発車時刻のみ。終着駅（発が無い）は着で代用。
-    return `<td class="stop-cell stop-cell--general">${dep || arr}</td>`;
+    return `<td class="stop-cell stop-cell--general${passClass}"${colorStyle}>${dep || arr}</td>`;
   }
-  // 始発駅（isOrigin）は構造上、実際の着時刻を持たない（decodeEkiJikokuの
-  // 単一時刻フォールバックが着=発を仮に埋めるだけで、上のarrも常に空欄）。
-  // 他の空欄マス（例: 終着駅の発）は従来通り空行のまま残すが、始発駅だけは
-  // 空の着行そのものを描画せず、縦の無駄な空白を無くす（2026-07-16要望）。
-  const arrRow = isOrigin ? '' : `<div class="stop-cell-row stop-cell-row--arr">${arr}</div>`;
+  // 始発駅（isOrigin）の着欄・その駅を通らない列車のマス、どちらも「値が
+  // 無い」だけで、他のマスと同じ行数（major:3行/basic:2行）の空divとして
+  // 描画する——行自体を省略すると、同じ<tr>内で行数の異なるマスが混在し、
+  // <td>の既定vertical-align（middle）で縦位置がずれる（2026-08-08指摘。
+  // 当日1回目の修正は始発駅の着欄だけが対象で、「駅を通らない」マス（従来
+  // 早期returnで空の<td>のみを返していた）は未対応のまま残っていたのが
+  // 「まだ揃っていない」の真因だった）。
+  const arrRow = `<div class="stop-cell-row stop-cell-row--arr">${arr}</div>`;
   if (station.scale === 'major') {
     // trackLabel（lib/oudParser.jsのresolveTrackLabel）— その駅自身が宣言
     // した番線名（TrackRyakusyou優先）に解決済みの値。丸数字(①②③)・上本/
@@ -248,27 +293,39 @@ function stopCellHtml(stop, station, isOrigin) {
     // 実物と食い違う（2026-07-15、プロジェクトオーナーからの実例で確認:
     // 大道寺の生値5は実際は「③」＝3番線）。解決できなかった場合（宣言なし
     // の駅・手作成の計画データ等）は従来通り生の数字にフォールバック。
-    const track = stop.trackLabel ?? (stop.track != null ? `${stop.track}` : '');
+    const track = stop ? (stop.trackLabel ?? (stop.track != null ? `${stop.track}` : '')) : '';
     return (
-      `<td class="stop-cell stop-cell--major">` +
+      `<td class="stop-cell stop-cell--major${passClass}"${colorStyle}>` +
       arrRow +
-      `<div class="stop-cell-row stop-cell-row--dep">${dep}</div>` +
       `<div class="stop-cell-row stop-cell-row--track">${track}</div>` +
+      `<div class="stop-cell-row stop-cell-row--dep">${dep}</div>` +
       `</td>`
     );
   }
-  return `<td class="stop-cell stop-cell--basic">${arrRow}<div class="stop-cell-row stop-cell-row--dep">${dep}</div></td>`;
+  return `<td class="stop-cell stop-cell--basic${passClass}"${colorStyle}>${arrRow}<div class="stop-cell-row stop-cell-row--dep">${dep}</div></td>`;
 }
 
-function stopTableHtml(diagram, { trainOverride } = {}) {
-  const trains = trainOverride ? diagram.trains.map((t) => (t.id === trainOverride.id ? trainOverride : t)) : diagram.trains;
-  const header = `<thead><tr><th>駅</th>${trains.map((t) => `<th>${t.number}</th>`).join('')}</tr></thead>`;
-  const rows = diagram.line.stations
+// `direction` — 'down'（下り）| 'up'（上り）。2026-08-08要望「タイムテーブル、
+// 上り下りでタブを分けてほしい。駅順序を反転するのを忘れずに」— 上り列車は
+// 物理的に逆方向へ進むため、時刻表としては駅の並びも下りの逆順（終点側から
+// 読む）にするのが慣習。列の絞り込み（列車）と行の並び順（駅）、両方を
+// direction一つで連動させる。
+function stopTableHtml(diagram, { trainOverride, direction } = {}) {
+  const allTrains = trainOverride ? diagram.trains.map((t) => (t.id === trainOverride.id ? trainOverride : t)) : diagram.trains;
+  const trains = direction ? allTrains.filter((t) => t.direction === direction) : allTrains;
+  const stations = direction === 'up' ? [...diagram.line.stations].reverse() : diagram.line.stations;
+  const header = `<thead><tr><th>駅</th>${trains
+    .map((t) => {
+      const color = resolveTrainColor(t.trainType?.color);
+      return `<th${color ? ` style="color:${color}"` : ''}>${t.number}</th>`;
+    })
+    .join('')}</tr></thead>`;
+  const rows = stations
     .map((station) => {
       const cells = trains
         .map((t) => {
           const stop = t.stops.find((s) => s.stationId === station.id);
-          return stopCellHtml(stop, station, stop === t.stops[0]);
+          return stopCellHtml(stop, station, stop === t.stops[0], resolveTrainColor(t.trainType?.color));
         })
         .join('');
       // branchFromStationId (lib/oudParser.js, issue #6): this row is a
@@ -309,7 +366,7 @@ function renderDiagramSynced(container, data, options) {
 
 function renderPlanTab() {
   renderDiagramSynced(el.planDiagram, { stations: state.diagram.line.stations, trains: state.diagram.trains }, diagramDisplayOptions());
-  el.planTable.innerHTML = stopTableHtml(state.diagram);
+  el.planTable.innerHTML = stopTableHtml(state.diagram, { direction: state.timetableDirection });
 }
 
 // ---------- ダイヤグラムの表示設定（拡大率・テーマ・入出庫/運用系5トグル、計画・運転整理タブ共通） ----------
@@ -337,6 +394,10 @@ function updateDiagramControls() {
   el.planShowTrainNum.checked = state.showTrainNumbers;
   el.dispatchShowTrainNum.checked = state.showTrainNumbers;
   el.themeSelect.value = state.theme;
+  el.planDirectionDown.classList.toggle('active', state.timetableDirection === 'down');
+  el.planDirectionUp.classList.toggle('active', state.timetableDirection === 'up');
+  el.dispatchDirectionDown.classList.toggle('active', state.timetableDirection === 'down');
+  el.dispatchDirectionUp.classList.toggle('active', state.timetableDirection === 'up');
 }
 
 // 縦方向（駅間隔）ズームは専用の＋/－ボタンで変更する（2026-07-14、
@@ -430,6 +491,38 @@ function setupDiagramPanZoom(container) {
     state.diagramScrollTop = container.scrollTop;
   });
 
+  // ホイールズーム連打時のフリーズ対策（2026-08-08、実操作フィードバック
+  // ——issue #8のパフォーマンス計測時点で「ホイールズームが1ティックごとに
+  // 同期的にrenderPlanTab等を呼ぶ」点だけがリスクとして予見されていたが、
+  // 実データ規模で実際に体感できる固まりとして顕在化した）。ホイール
+  // イベントはマウスの動きに応じて短時間に何十発も飛んでくるが、そのたびに
+  // 4タブぶんの同期再描画を行っていたのが原因。1フレーム（rAF）に1回だけ
+  // ——その時点で溜まっている最新のズーム状態で——再描画するよう間引く。
+  //
+  // 間引いている間はスピナーを表示する。ただしrAFコールバック自体は
+  // ブラウザのペイント処理の直前に同期実行されるため、「スピナー表示→
+  // 重い再描画」を同じフレーム内でやってしまうと、ブラウザがスピナー表示を
+  // 一度もペイントしないまま次の状態に上書きしてしまいうる。1つ前のホイール
+  // イベントで既にrAFを予約済み（＝そのフレームは既にスピナー表示済みの
+  // 状態で少なくとも1回ペイントされている）の場合はそのまま最新の内容で
+  // 上書きするだけでよいが、バーストの最初の1回だけは「表示→次のペイント→
+  // 重い処理」の順序を保証したいので二重rAFにする。
+  const spinner = container.parentElement.querySelector('.diagram-loading-spinner');
+  let pendingWheelWork = null; // 次に確定させる再描画処理（最新のホイールイベントで上書きされる）
+  let wheelFrameScheduled = false;
+  let burstScrollLeft = null; // このバースト内でのscrollLeft見込み値（DOMへの反映は確定時まで遅延）
+  let hideSpinnerTimer = null;
+
+  function commitWheelWork() {
+    wheelFrameScheduled = false;
+    const work = pendingWheelWork;
+    pendingWheelWork = null;
+    if (work) work();
+    // ホイール操作が止まってから少し待って隠す（1フレームごとに点滅させない）。
+    clearTimeout(hideSpinnerTimer);
+    hideSpinnerTimer = setTimeout(() => spinner?.classList.remove('is-visible'), 150);
+  }
+
   container.addEventListener(
     'wheel',
     (e) => {
@@ -441,21 +534,38 @@ function setupDiagramPanZoom(container) {
       // カーソル位置のコンテンツ座標（SVG内のx、MARGIN.left起点）を求め、
       // ズーム後にその座標が再び同じ画面位置に来るようスクロール位置を
       // 合わせる。MARGIN.leftはズームしても動かない固定オフセットなので、
-      // 「MARGIN.leftからの距離」だけを比率でスケールする。
+      // 「MARGIN.leftからの距離」だけを比率でスケールする。バースト中は
+      // まだDOMに反映していないscrollLeft見込み値（burstScrollLeft）を
+      // 基点にすることで、複数ティック分のズーム比を正しく積み上げる
+      // （実測のcontainer.scrollLeftを毎回使うと、間引かれた前のティックの
+      // 分だけカーソル追従がずれる）。
       const rect = container.getBoundingClientRect();
       const cursorClientX = e.clientX - rect.left;
-      const cursorContentX = container.scrollLeft + cursorClientX;
+      const baseScrollLeft = burstScrollLeft != null ? burstScrollLeft : container.scrollLeft;
+      const cursorContentX = baseScrollLeft + cursorClientX;
       const ratio = newZoomX / oldZoomX;
       const newCursorContentX = MARGIN.left + (cursorContentX - MARGIN.left) * ratio;
+      burstScrollLeft = newCursorContentX - cursorClientX;
 
       state.diagramZoomX = newZoomX;
       localStorage.setItem('tline-zoom-x', String(state.diagramZoomX));
-      renderTabLazy('plan', renderPlanTab);
-      renderTabLazy('dispatch', renderDispatchTab);
-      renderTabLazy('actual', renderActualTab);
-      renderTabLazy('duty', renderDutyTab);
 
-      container.scrollLeft = newCursorContentX - cursorClientX;
+      const scrollLeftToApply = burstScrollLeft;
+      pendingWheelWork = () => {
+        renderTabLazy('plan', renderPlanTab);
+        renderTabLazy('dispatch', renderDispatchTab);
+        renderTabLazy('actual', renderActualTab);
+        renderTabLazy('duty', renderDutyTab);
+        container.scrollLeft = scrollLeftToApply;
+        burstScrollLeft = null; // 確定済み。次のホイールイベントはDOMの実測値から再開
+      };
+
+      clearTimeout(hideSpinnerTimer);
+      spinner?.classList.add('is-visible');
+      if (!wheelFrameScheduled) {
+        wheelFrameScheduled = true;
+        requestAnimationFrame(() => requestAnimationFrame(commitWheelWork));
+      }
     },
     { passive: false }
   );
@@ -484,6 +594,20 @@ bindDiagramToggle('showChainLines', el.planShowChainLink, el.dispatchShowChainLi
 bindDiagramToggle('showDepotOperationNumbers', el.planShowDepotOpnum, el.dispatchShowDepotOpnum);
 bindDiagramToggle('showTurnbackOperationNumbers', el.planShowTurnbackOpnum, el.dispatchShowTurnbackOpnum);
 bindDiagramToggle('showTrainNumbers', el.planShowTrainNum, el.dispatchShowTrainNum);
+
+// タイムテーブルの上り/下り切り替え（2026-08-08要望）。ズーム等と同じく
+// 計画・運転整理タブで共通のstate（timetableDirection）を持ち、どちらの
+// タブのボタンを押しても両方に反映される。
+function setTimetableDirection(direction) {
+  state.timetableDirection = direction;
+  updateDiagramControls();
+  renderTabLazy('plan', renderPlanTab);
+  renderTabLazy('dispatch', renderDispatchTab);
+}
+el.planDirectionDown.addEventListener('click', () => setTimetableDirection('down'));
+el.planDirectionUp.addEventListener('click', () => setTimetableDirection('up'));
+el.dispatchDirectionDown.addEventListener('click', () => setTimetableDirection('down'));
+el.dispatchDirectionUp.addEventListener('click', () => setTimetableDirection('up'));
 
 el.themeSelect.addEventListener('change', () => {
   state.theme = el.themeSelect.value;
@@ -538,15 +662,58 @@ function dispatchConflictsHtml(conflicts) {
   return `<div class="dispatch-conflicts-warning">⚠ この調整で新たに${conflicts.length}件の番線競合が発生します<ul>${items}</ul></div>`;
 }
 
-// 仕業「調整機能」（issue #2続報、2026-08-01）— duty.mjsのfindDutiesBroken
-// ByAdjustmentのdocコメント参照。仕業は参照している列車の時刻をそのつど
-// 引くだけなので、運転整理の遅延が仕業を「乗り継ぎ不能」にしていないかを
-// 警告する形が実質的な「調整」チェックになる。dispatchConflictsHtmlと
-// 同じ「調整前には無かった問題だけを報告する」設計。
-function dispatchDutyWarningsHtml(brokenDuties) {
+// 仕業「調整機能」（issue #2続報、2026-08-01・2026-08-07拡張）—
+// duty.mjsのfindDutiesBrokenByAdjustment/findDutiesWithNewBufferViolations
+// のdocコメント参照。仕業は参照している列車の時刻をそのつど引くだけなので、
+// 運転整理の遅延が仕業を「乗り継ぎ不能（時刻重なり）」「バッファ不足
+// （乗り継ぎ余裕時分未満）」にしていないかを警告する形が実質的な「調整」
+// チェックになる。dispatchConflictsHtmlと同じ「調整前には無かった問題だけ
+// を報告する」設計。
+//
+// 2026-08-07拡張: 警告を出すだけでなく、findDutySwapSuggestions（前後の
+// 区間の時刻に収まる代替列車）が候補を見つけられた区間には「振り替え」
+// ボタンを添える。ボタンはdata-swap-duty-id/data-swap-segment-index/
+// data-swap-train-idを持ち、クリックでその区間のtrainIdを候補列車に
+// 差し替える（下のel.dispatchConflicts.addEventListener参照）。
+function dispatchDutyWarningsHtml(brokenDuties, adjustedTrain) {
   if (brokenDuties.length === 0) return '';
-  const items = brokenDuties.map((d) => `<li>仕業「${d.name}」— 区間の乗り継ぎ時刻が重なり、成立しなくなります</li>`).join('');
-  return `<div class="dispatch-conflicts-warning">⚠ この調整で${brokenDuties.length}件の仕業が乗り継ぎ不能になります<ul>${items}</ul></div>`;
+  const trainById = new Map(state.diagram.trains.map((t) => [t.id, t]));
+  const items = brokenDuties
+    .map((d) => {
+      const reasons = [];
+      if (d.overlap) reasons.push('区間の乗り継ぎ時刻が重なり成立しなくなります');
+      if (d.buffer) reasons.push('乗り継ぎ時間が最低乗り継ぎ時間を下回ります');
+      const suggestions = adjustedTrain ? findDutySwapSuggestions(d, state.diagram.trains, adjustedTrain) : [];
+      const suggestionHtml = suggestions
+        .map(({ segmentIndex, candidates }) => {
+          const buttons = candidates
+            .slice(0, 5)
+            .map((c) => {
+              const t = trainById.get(c.trainId);
+              const label = `${t ? t.number : c.trainId}（${formatTime(c.start)}→${formatTime(c.end)}）`;
+              return `<button type="button" data-swap-duty-id="${d.id}" data-swap-segment-index="${segmentIndex}" data-swap-train-id="${c.trainId}">${label}に振り替え</button>`;
+            })
+            .join(' ');
+          return `<div class="duty-swap-suggestion">区間${segmentIndex + 1}の振り替え候補: ${buttons}</div>`;
+        })
+        .join('');
+      return `<li>仕業「${d.name}」— ${reasons.join('／')}${suggestionHtml}</li>`;
+    })
+    .join('');
+  return `<div class="dispatch-conflicts-warning">⚠ この調整で${brokenDuties.length}件の仕業に問題が発生します<ul>${items}</ul></div>`;
+}
+
+// 時刻重なり(findDutiesBrokenByAdjustment)とバッファ不足
+// (findDutiesWithNewBufferViolations)は別関数の結果なので、同じ仕業が
+// 両方に該当する場合は1行にまとめる（idでマージ、reasonフラグを両方立てる）。
+function mergeDutyIssues(overlapBroken, bufferBroken) {
+  const byId = new Map();
+  for (const d of overlapBroken) byId.set(d.id, { ...d, overlap: true, buffer: false });
+  for (const d of bufferBroken) {
+    if (byId.has(d.id)) byId.get(d.id).buffer = true;
+    else byId.set(d.id, { ...d, overlap: false, buffer: true });
+  }
+  return [...byId.values()];
 }
 
 function renderDispatchTab() {
@@ -556,11 +723,33 @@ function renderDispatchTab() {
     { stations: state.diagram.line.stations, trains: state.diagram.trains },
     { highlightTrainId: train?.id, adjustedTrain: state.adjustedTrain, ...diagramDisplayOptions() }
   );
-  el.dispatchTable.innerHTML = state.adjustedTrain ? stopTableHtml(state.diagram, { trainOverride: state.adjustedTrain }) : stopTableHtml(state.diagram);
+  el.dispatchTable.innerHTML = state.adjustedTrain
+    ? stopTableHtml(state.diagram, { trainOverride: state.adjustedTrain, direction: state.timetableDirection })
+    : stopTableHtml(state.diagram, { direction: state.timetableDirection });
   const conflicts = state.adjustedTrain ? findNewTrackConflicts(state.diagram.trains, state.adjustedTrain) : [];
-  const brokenDuties = state.adjustedTrain ? findDutiesBrokenByAdjustment(state.duties, state.diagram.trains, state.adjustedTrain) : [];
-  el.dispatchConflicts.innerHTML = dispatchConflictsHtml(conflicts) + dispatchDutyWarningsHtml(brokenDuties);
+  const overlapBroken = state.adjustedTrain ? findDutiesBrokenByAdjustment(state.duties, state.diagram.trains, state.adjustedTrain) : [];
+  const bufferBroken = state.adjustedTrain ? findDutiesWithNewBufferViolations(state.duties, state.diagram.trains, state.adjustedTrain) : [];
+  const dutyIssues = mergeDutyIssues(overlapBroken, bufferBroken);
+  el.dispatchConflicts.innerHTML = dispatchConflictsHtml(conflicts) + dispatchDutyWarningsHtml(dutyIssues, state.adjustedTrain);
 }
+
+// 振り替えボタンのクリックを委譲で拾う（dispatchConflictsは再描画のたびに
+// innerHTMLごと差し替わるため、ボタン個別へのリスナー付与ではなく親要素に
+// 1回だけ登録する）。対象の仕業・区間のtrainIdを候補列車に差し替えて
+// 保存し、運転整理タブ・仕業タブ両方を再描画する。
+el.dispatchConflicts.addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-swap-duty-id]');
+  if (!btn) return;
+  const duty = state.duties.find((d) => d.id === btn.dataset.swapDutyId);
+  if (!duty) return;
+  const segmentIndex = Number(btn.dataset.swapSegmentIndex);
+  const segment = duty.segments[segmentIndex];
+  if (!segment) return;
+  segment.trainId = btn.dataset.swapTrainId;
+  showToast(`仕業「${duty.name}」の区間${segmentIndex + 1}を振り替えました。`, 'info');
+  renderDispatchTab();
+  renderTabLazy('duty', renderDutyTab);
+});
 
 el.dispatchTrain.addEventListener('change', () => {
   state.dispatchTrainId = el.dispatchTrain.value;
@@ -662,7 +851,7 @@ function actualTableHtml() {
       // ままにし、基準時刻をplaceholderでうっすら見せる。自動補完で埋まった
       // セル（値ありmanualフラグなし）は--autoクラスで手入力と見分ける。
       const inputHtml = (field, value, manual, baseTime) => {
-        if (baseTime == null) return '—';
+        if (baseTime == null) return '';
         const cls = value != null && !manual ? ' class="actual-input--auto" title="自動補完された値（手入力で訂正できます）"' : '';
         return `<input data-train-id="${train.id}" data-stop-index="${stopIndex}" data-field="${field}" value="${value ?? ''}" placeholder="${baseTime}"${cls} />`;
       };
@@ -670,10 +859,10 @@ function actualTableHtml() {
         <tr>
           <th>${train.number}</th>
           <th>${station ? station.name : stop.stationId}</th>
-          <td>${stop.arrival ?? '—'}</td>
+          <td>${stop.arrival ?? ''}</td>
           <td>${inputHtml('arrival', actual.arrival, actual.manualArrival, stop.arrival)}</td>
           <td class="${deltaClass(arrDelta)}">${formatDelta(arrDelta)}</td>
-          <td>${stop.departure ?? '—'}</td>
+          <td>${stop.departure ?? ''}</td>
           <td>${inputHtml('departure', actual.departure, actual.manualDeparture, stop.departure)}</td>
           <td class="${deltaClass(depDelta)}">${formatDelta(depDelta)}</td>
         </tr>`);
@@ -839,9 +1028,32 @@ el.dutySegmentForm.addEventListener('submit', (e) => {
 });
 
 el.dutySegmentTable.addEventListener('click', (e) => {
-  const btn = e.target.closest('button[data-remove-index]');
-  if (!btn) return;
-  state.dutyDraft.segments.splice(Number(btn.dataset.removeIndex), 1);
+  const removeBtn = e.target.closest('button[data-remove-index]');
+  const upBtn = e.target.closest('button[data-move-up-index]');
+  const downBtn = e.target.closest('button[data-move-down-index]');
+  const editBtn = e.target.closest('button[data-edit-index]');
+  if (removeBtn) {
+    state.dutyDraft.segments.splice(Number(removeBtn.dataset.removeIndex), 1);
+  } else if (upBtn) {
+    const i = Number(upBtn.dataset.moveUpIndex);
+    if (i > 0) [state.dutyDraft.segments[i - 1], state.dutyDraft.segments[i]] = [state.dutyDraft.segments[i], state.dutyDraft.segments[i - 1]];
+  } else if (downBtn) {
+    const i = Number(downBtn.dataset.moveDownIndex);
+    if (i < state.dutyDraft.segments.length - 1) [state.dutyDraft.segments[i + 1], state.dutyDraft.segments[i]] = [state.dutyDraft.segments[i], state.dutyDraft.segments[i + 1]];
+  } else if (editBtn) {
+    // 「編集」は一覧から一旦外して追加フォームへ差し戻すだけ——フォームの
+    // 列車/乗車駅/降車駅セレクトへの反映まではしない（区間追加フォーム側の
+    // 状態と二重管理になるのを避けるシンプルな割り切り）。ユーザーは
+    // フォームで選び直して再度「区間を追加」する。並び順を保ちたい場合は
+    // ↑↓で調整してから編集する想定。
+    const i = Number(editBtn.dataset.editIndex);
+    const [removed] = state.dutyDraft.segments.splice(i, 1);
+    el.dutySegmentTrain.value = removed.trainId;
+    updateDutySegmentFromOptions();
+    showToast('区間をフォームに戻しました。乗車駅・降車駅を選び直して「区間を追加」してください。', 'info');
+  } else {
+    return;
+  }
   renderTabLazy('duty', renderDutyTab);
 });
 
@@ -857,19 +1069,22 @@ el.dutySaveForm.addEventListener('submit', (e) => {
     return;
   }
   const id = state.dutyDraft.id || `duty-${crypto.randomUUID()}`;
-  const duty = { id, name, segments: state.dutyDraft.segments };
+  const minConnectionSeconds = Number(el.dutyBuffer.value) || null;
+  const duty = { id, name, segments: state.dutyDraft.segments, minConnectionSeconds };
   const existingIndex = state.duties.findIndex((d) => d.id === id);
   if (existingIndex === -1) state.duties.push(duty);
   else state.duties[existingIndex] = duty;
-  state.dutyDraft = { id: null, name: '', segments: [] };
+  state.dutyDraft = { id: null, name: '', segments: [], minConnectionSeconds: null };
   el.dutyName.value = '';
+  el.dutyBuffer.value = '';
   showToast(`仕業「${name}」を保存しました。`, 'info');
   renderTabLazy('duty', renderDutyTab);
 });
 
 el.dutyNew.addEventListener('click', () => {
-  state.dutyDraft = { id: null, name: '', segments: [] };
+  state.dutyDraft = { id: null, name: '', segments: [], minConnectionSeconds: null };
   el.dutyName.value = '';
+  el.dutyBuffer.value = '';
   renderTabLazy('duty', renderDutyTab);
 });
 
@@ -879,30 +1094,58 @@ el.dutyListTable.addEventListener('click', (e) => {
   const duty = state.duties.find((d) => d.id === btn.dataset.dutyId);
   if (!duty) return;
   if (btn.dataset.action === 'edit') {
-    state.dutyDraft = { id: duty.id, name: duty.name, segments: [...duty.segments] };
+    state.dutyDraft = { id: duty.id, name: duty.name, segments: [...duty.segments], minConnectionSeconds: duty.minConnectionSeconds ?? null };
     el.dutyName.value = duty.name;
+    el.dutyBuffer.value = duty.minConnectionSeconds ?? '';
   } else if (btn.dataset.action === 'delete') {
     state.duties = state.duties.filter((d) => d.id !== duty.id);
     if (state.dutyDraft.id === duty.id) {
-      state.dutyDraft = { id: null, name: '', segments: [] };
+      state.dutyDraft = { id: null, name: '', segments: [], minConnectionSeconds: null };
       el.dutyName.value = '';
+      el.dutyBuffer.value = '';
     }
   }
   renderTabLazy('duty', renderDutyTab);
 });
 
+el.dutyBuffer.addEventListener('input', () => {
+  el.dutyBufferWarnings.innerHTML = dutyBufferWarningsHtml();
+});
+
 function dutySegmentTableHtml() {
   const header = '<thead><tr><th>列車</th><th>区間</th><th>時刻</th><th></th></tr></thead>';
   if (state.dutyDraft.segments.length === 0) return `${header}<tbody><tr><td colspan="4">区間はまだありません</td></tr></tbody>`;
+  const last = state.dutyDraft.segments.length - 1;
   const rows = state.dutyDraft.segments
     .map((s, i) => {
       const train = state.diagram.trains.find((t) => t.id === s.trainId);
       const range = segmentTimeRange(s, state.diagram.trains);
       const timeText = range ? `${formatTime(range.start)}〜${formatTime(range.end)}` : '—';
-      return `<tr><td>${train ? train.number : s.trainId}</td><td>${stationName(s.fromStationId)} → ${stationName(s.toStationId)}</td><td>${timeText}</td><td><button type="button" data-remove-index="${i}">削除</button></td></tr>`;
+      const upBtn = `<button type="button" data-move-up-index="${i}" ${i === 0 ? 'disabled' : ''} title="上へ">↑</button>`;
+      const downBtn = `<button type="button" data-move-down-index="${i}" ${i === last ? 'disabled' : ''} title="下へ">↓</button>`;
+      return `<tr><td>${train ? train.number : s.trainId}</td><td>${stationName(s.fromStationId)} → ${stationName(s.toStationId)}</td><td>${timeText}</td><td>${upBtn}${downBtn} <button type="button" data-edit-index="${i}">編集</button> <button type="button" data-remove-index="${i}">削除</button></td></tr>`;
     })
     .join('');
   return `${header}<tbody>${rows}</tbody>`;
+}
+
+// 仕業タブの区間table直下に、現在編集中の内容（dutyDraft.segments +
+// dutyBuffer入力欄の値）でのバッファ違反を即時表示する。保存前のドラフト
+// 段階で気づけるように、findDutyBufferViolationsに渡す仮のduty
+// オブジェクトをその場で組み立てる（保存はしない）。
+function dutyBufferWarningsHtml() {
+  const minConnectionSeconds = Number(el.dutyBuffer.value) || null;
+  if (!minConnectionSeconds) return '';
+  const violations = findDutyBufferViolations({ segments: state.dutyDraft.segments, minConnectionSeconds }, state.diagram.trains);
+  if (violations.length === 0) return '';
+  const items = violations
+    .map((v) => {
+      const from = state.dutyDraft.segments[v.fromIndex];
+      const to = state.dutyDraft.segments[v.toIndex];
+      return `<li>${stationName(from.toStationId)}での乗り継ぎが${v.gapSeconds}秒しかありません（最低${minConnectionSeconds}秒）</li>`;
+    })
+    .join('');
+  return `<div class="dispatch-conflicts-warning">⚠ 乗り継ぎ時間が不足している区間があります<ul>${items}</ul></div>`;
 }
 
 function dutyListTableHtml() {
@@ -925,6 +1168,7 @@ function dutyListTableHtml() {
 // 対象かはダイヤグラム下の表で確認する想定）。
 function renderDutyTab() {
   el.dutySegmentTable.innerHTML = dutySegmentTableHtml();
+  el.dutyBufferWarnings.innerHTML = dutyBufferWarningsHtml();
   el.dutyListTable.innerHTML = dutyListTableHtml();
   renderDiagramSynced(
     el.dutyDiagram,

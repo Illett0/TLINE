@@ -65,6 +65,14 @@ body {
   padding: 10px 20px;
   background: var(--color-panel);
   border-bottom: 1px solid var(--color-border);
+  /* タブ（計画/運転整理/実績/仕業）を常時画面上部に固定してほしいという
+     要望（2026-08-08）。ページ全体はbody/mainに高さ制限が無くコンテンツ量
+     に応じて素直に伸びる（ダイヤグラム・タイムテーブル自体は別途
+     .diagram-container/.stop-table-scroll内で個別にスクロールする）ため、
+     ヘッダーごとwindowスクロールに対してstickyにする。 */
+  position: sticky;
+  top: 0;
+  z-index: 10;
 }
 #app-header h1 { font-size: 16px; margin: 0; letter-spacing: 0.05em; }
 
@@ -186,6 +194,33 @@ main { padding: 20px; }
 .dispatch-conflicts-warning ul { margin: 4px 0 0; padding-left: 20px; }
 #dispatch-conflicts:empty { display: none; }
 
+.duty-swap-suggestion { margin-top: 4px; font-size: 12px; }
+.duty-swap-suggestion button { margin: 2px 4px 2px 0; }
+
+/* ズーム中の再描画スピナー（2026-08-08、ホイールズーム連打時のフリーズ
+   感への対応）。ダイヤグラムのSVGはcontainer.innerHTMLを丸ごと差し替える
+   ため、スピナー自体はcontainer内ではなく親のdiagram-wrapperに置く（中に
+   置くと次の再描画で消えてしまう）。 */
+.diagram-wrapper { position: relative; }
+.diagram-loading-spinner {
+  display: none;
+  position: absolute;
+  top: 20px;
+  right: 20px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 3px solid var(--color-border);
+  border-top-color: var(--color-accent);
+  animation: diagram-spin 0.7s linear infinite;
+  pointer-events: none;
+  z-index: 2;
+}
+.diagram-loading-spinner.is-visible { display: block; }
+@keyframes diagram-spin {
+  to { transform: rotate(360deg); }
+}
+
 .diagram-container {
   background: var(--color-panel);
   border: 1px solid var(--color-border);
@@ -287,9 +322,26 @@ main { padding: 20px; }
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
 }
+
+/* タイムテーブルの上り/下り切り替え（2026-08-08要望）。.tab-buttonと同じ
+   見た目のトグルペア。 */
+.timetable-direction-toggle { display: flex; gap: 4px; margin-bottom: 8px; }
+.timetable-direction-button {
+  background: transparent;
+  border: 1px solid var(--color-border);
+  color: var(--color-text-dim);
+  padding: 4px 14px;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  font-size: 12px;
+}
+.timetable-direction-button:hover { background: rgba(255, 255, 255, 0.06); }
+.timetable-direction-button.active { background: var(--color-accent); color: var(--color-accent-text); font-weight: 600; border-color: var(--color-accent); }
 .stop-table {
   border-collapse: collapse;
-  width: 100%;
+  /* width:100%だと列車数が少ないダイヤで各列が不要に間延びする
+     （2026-08-08指摘）。内容に応じた固定長のまま、はみ出す分だけ
+     .stop-table-scrollが横スクロールする形にする。 */
   font-size: 12px;
 }
 .stop-table th,
@@ -334,9 +386,29 @@ main { padding: 20px; }
 .stop-table td.stop-cell--basic {
   padding: 0;
 }
-.stop-cell-row { padding: 3px 10px; line-height: 1.3; }
+/* テキストノードを一切持たない空div（値の無い着/発マス）はline-heightに
+   よる行ボックス自体が発生せず、paddingぶんの高さしか持たない——同じ
+   <tr>内で「空の行を含むセル」と「全部値のあるセル」が混在すると、セル
+   ごとの合計高さが変わり、<td>の既定vertical-align:middleで縦位置がずれる
+   （2026-08-08、実データスクリーンショットで発覚）。
+   min-height（line-heightと同じem基準の計算値）で一度直したが、line-height
+   由来の自動算出とmin-heightの算出が別経路になるため、12pxフォント×1.3=
+   15.6pxのような端数でブラウザの丸め方がわずかに食い違い、1px単位のズレが
+   残った。line-heightに頼らず、行の高さそのものを固定値にする（プロジェクト
+   オーナー提案: 「枠を固定してその中に記述する」）ことで、中身の有無や
+   line-heightの端数計算に一切左右されない、常に同じ整数pxの高さにする。 */
+.stop-cell-row { padding: 3px 10px; line-height: 1.3; height: 22px; }
 .stop-cell-row + .stop-cell-row { border-top: 1px solid var(--color-border); }
-.stop-cell-row--track { color: var(--color-text-dim); font-size: 10px; }
+.stop-cell-row--track { color: var(--color-text-dim); font-size: 10px; height: 19px; }
+/* 列車種別色をタイムテーブルの文字色にも反映する（2026-08-08要望）。
+   renderer/app.mjsのstopCellHtmlが`--train-color`カスタムプロパティを
+   <td>にインラインで渡す（colorを直接指定すると詳細度でstop-cell--pass
+   の薄グレーに勝ってしまうため、通常のクラスと同じ詳細度になるよう
+   カスタムプロパティ経由にしている——このルールとstop-cell--passが同じ
+   詳細度になるよう、両方とも単一クラスセレクタ`.stop-table td.stop-cell`
+   系で揃えてあり、後に書いた方（下のstop-cell--pass）が優先される）。
+   .stop-cell-row--track（下記）は種別色を継承せず常にdim固定。 */
+.stop-table td.stop-cell { color: var(--train-color, inherit); }
 .stop-table td input {
   width: 90px;
   background: var(--color-bg);
@@ -352,6 +424,16 @@ main { padding: 20px; }
 /* 実績タブ: 遅延の自動補完で埋まったセル（issue #5）。手入力（通常色）と
    見分けられるよう淡色＋斜体にする。手入力で訂正すると通常表示に戻る。 */
 .stop-table input.actual-input--auto { color: var(--color-text-dim); font-style: italic; }
+
+/* 通過駅（駅扱いコード=2、renderer/app.mjsのstopCellHtml参照、2026-08-08
+   要望）。実際に停車する駅と見た目で区別できるよう薄いグレーにする——
+   `--color-text-dim`（番線行や実績自動補完セルにも使う「少し薄い」色）
+   よりもう一段薄くしてほしいとのフィードバックを受け、背景色（panel）に
+   寄せてさらに淡くする。 */
+.stop-table td.stop-cell--pass,
+.stop-table td.stop-cell--pass .stop-cell-row {
+  color: color-mix(in srgb, var(--color-text-dim) 55%, var(--color-panel) 45%);
+}
 
 .dispatch-form {
   display: flex;

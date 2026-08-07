@@ -64,7 +64,14 @@
         <label><input id="plan-show-turnback-opnum" type="checkbox" checked /> 折り返し運番</label>
         <label><input id="plan-show-trainnum" type="checkbox" checked /> 列車番号</label>
       </div>
-      <div id="plan-diagram" class="diagram-container"></div>
+      <div class="diagram-wrapper">
+        <div id="plan-diagram" class="diagram-container"></div>
+        <div class="diagram-loading-spinner" aria-hidden="true"></div>
+      </div>
+      <div class="timetable-direction-toggle" role="group" aria-label="タイムテーブルの方向">
+        <button type="button" id="plan-direction-down" class="timetable-direction-button active" data-direction="down">下り</button>
+        <button type="button" id="plan-direction-up" class="timetable-direction-button" data-direction="up">上り</button>
+      </div>
       <div class="stop-table-scroll"><table id="plan-table" class="stop-table"></table></div>
     </section>
 
@@ -102,7 +109,14 @@
         <label><input id="dispatch-show-turnback-opnum" type="checkbox" checked /> 折り返し運番</label>
         <label><input id="dispatch-show-trainnum" type="checkbox" checked /> 列車番号</label>
       </div>
-      <div id="dispatch-diagram" class="diagram-container"></div>
+      <div class="diagram-wrapper">
+        <div id="dispatch-diagram" class="diagram-container"></div>
+        <div class="diagram-loading-spinner" aria-hidden="true"></div>
+      </div>
+      <div class="timetable-direction-toggle" role="group" aria-label="タイムテーブルの方向">
+        <button type="button" id="dispatch-direction-down" class="timetable-direction-button active" data-direction="down">下り</button>
+        <button type="button" id="dispatch-direction-up" class="timetable-direction-button" data-direction="up">上り</button>
+      </div>
       <div class="stop-table-scroll"><table id="dispatch-table" class="stop-table"></table></div>
     </section>
 
@@ -133,13 +147,16 @@
         </span>
         <span class="diagram-zoom-hint">横方向はダイヤグラム上でマウスホイール／右ドラッグでパン（ズーム率はタブ間で共通です）</span>
       </div>
-      <div id="actual-diagram" class="diagram-container"></div>
+      <div class="diagram-wrapper">
+        <div id="actual-diagram" class="diagram-container"></div>
+        <div class="diagram-loading-spinner" aria-hidden="true"></div>
+      </div>
       <div class="stop-table-scroll"><table id="actual-table" class="stop-table"></table></div>
     </section>
 
     <section id="tab-duty" class="tab-panel">
       <h2>仕業</h2>
-      <p class="panel-note">仕業（乗務員が担当する列車のつながり）は.oud/.oud2ファイルには存在しないデータのため、TLINE独自の機能としてここで作成・編集します（.tlineファイル内に保存、取り込み対象外）。運用と違い、乗務員は途中で別の列車に乗り換えられるので、区間ごとに列車を選んで追加していきます。</p>
+      <p class="panel-note">仕業（乗務員が担当する列車のつながり）は.oud/.oud2ファイルには存在しないデータのため、TLINE独自の機能としてここで作成・編集します（.tlineファイル内に保存、取り込み対象外）。運用と違い、乗務員は途中で別の列車に乗り換えられるので、区間ごとに列車を選んで追加していきます。最低乗り継ぎ時間を設定すると、同じ駅での乗り継ぎがそれを下回っていないかチェックします。運転整理タブでこの仕業に使われている列車を調整すると、乗り継ぎ不能・バッファ不足を警告し、可能なら振り替え候補の列車を提案します。</p>
       <form id="duty-segment-form" class="dispatch-form">
         <label>
           列車
@@ -156,10 +173,15 @@
         <button type="submit">区間を追加</button>
       </form>
       <div class="stop-table-scroll"><table id="duty-segment-table" class="stop-table"></table></div>
+      <div id="duty-buffer-warnings"></div>
       <form id="duty-save-form" class="dispatch-form">
         <label>
           仕業番号／名称
           <input id="duty-name" type="text" placeholder="例: 2N" />
+        </label>
+        <label>
+          最低乗り継ぎ時間（秒、任意）
+          <input id="duty-buffer" type="number" step="1" min="0" placeholder="例: 120" />
         </label>
         <button type="submit">この仕業を保存</button>
         <button type="button" id="duty-new">新規仕業</button>
@@ -173,7 +195,10 @@
         </span>
         <span class="diagram-zoom-hint">横方向はダイヤグラム上でマウスホイール／右ドラッグでパン（ズーム率はタブ間で共通です）</span>
       </div>
-      <div id="duty-diagram" class="diagram-container"></div>
+      <div class="diagram-wrapper">
+        <div id="duty-diagram" class="diagram-container"></div>
+        <div class="diagram-loading-spinner" aria-hidden="true"></div>
+      </div>
       <h3>登録済みの仕業</h3>
       <div class="stop-table-scroll"><table id="duty-list-table" class="stop-table"></table></div>
     </section>

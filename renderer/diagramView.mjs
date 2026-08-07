@@ -72,7 +72,7 @@ function distanceToY(distanceKm, maxDistanceKm, plotHeight) {
 // too dark toward white until it clears a visibility floor; colors that are
 // already bright enough (the vast majority — reds/blues/oranges etc. used
 // for faster train classes) pass through unchanged.
-function ensureVisibleOnDark(hex) {
+export function ensureVisibleOnDark(hex) {
   if (!hex || !/^#[0-9a-fA-F]{6}$/.test(hex)) return hex;
   let r = parseInt(hex.slice(1, 3), 16);
   let g = parseInt(hex.slice(3, 5), 16);
@@ -247,6 +247,21 @@ function turnbackGeometry(fromEnd, fromInner, toStart, toInner) {
 // tooltip explaining why, so a user auditing a garage-like station (e.g. the
 // issue's 江ノ原信号場 example) can visually tell "confirmed continuation"
 // from "best guess" instead of every arc reading with equal confidence.
+// unverified（裏付けなし）な弧は、実際に見えるストローク幅（2px）ぴったり
+// にカーソルを合わせないとツールチップが出ない（SVGのfill:none要素は既定
+// でストロークの塗り部分だけがヒット判定を持つため）。2026-08-08指摘: 実際
+// ほぼホバーできない。見た目には影響しない、太い透明の当たり判定パスを
+// 同じ経路で重ねる（stroke-opacity:0だが実体としてはstrokeを持たせ、
+// pointer-events:strokeで明示的にストローク部分をヒット対象にする）。
+// <title>もこちら側だけに持たせる（見た目の細い線側に残すと、太い当たり
+// 判定と細い可視線とで別々の要素がホバーを取り合い、表示が不安定になる
+// ため）。
+function chainLineHitAreaSvg(d, unverified) {
+  if (!unverified) return '';
+  const title = '<title>運用番号による裏付けなし（近接推定のみ）</title>';
+  return `<path d="${d}" fill="none" stroke="#000" stroke-opacity="0" stroke-width="14" pointer-events="stroke">${title}</path>`;
+}
+
 function turnbackArcSvg(geo, fromColor, fromDash, toColor, toDash, unverified) {
   const { x1, y1, x2, y2, apexY, mx, rx } = geo;
   const c1 = Math.min(x1 + rx, mx);
@@ -255,10 +270,11 @@ function turnbackArcSvg(geo, fromColor, fromDash, toColor, toDash, unverified) {
   const d2 = (c2 > mx ? `M ${mx} ${apexY} L ${c2} ${apexY}` : `M ${mx} ${apexY}`) + ` Q ${x2} ${apexY} ${x2} ${y2}`;
   const dashStyle = (dash) => (dash ? `stroke-dasharray:${dash};` : '');
   const cls = `diagram-operation-chain-line${unverified ? ' diagram-operation-chain-line--unverified' : ''}`;
-  const title = unverified ? '<title>運用番号による裏付けなし（近接推定のみ）</title>' : '';
   return (
-    `<path d="${d1}" class="${cls}" style="stroke:${fromColor};${dashStyle(fromDash)}">${title}</path>` +
-    `<path d="${d2}" class="${cls}" style="stroke:${toColor};${dashStyle(toDash)}">${title}</path>`
+    `<path d="${d1}" class="${cls}" style="stroke:${fromColor};${dashStyle(fromDash)}"></path>` +
+    `<path d="${d2}" class="${cls}" style="stroke:${toColor};${dashStyle(toDash)}"></path>` +
+    chainLineHitAreaSvg(d1, unverified) +
+    chainLineHitAreaSvg(d2, unverified)
   );
 }
 
@@ -318,10 +334,11 @@ function throughConnectorSvg(geo, fromColor, fromDash, toColor, toDash, unverifi
   const d2 = `M ${mid[0]} ${mid[1]} C ${c2a[0]} ${c2a[1]} ${c2b[0]} ${c2b[1]} ${p2[0]} ${p2[1]}`;
   const dashStyle = (dash) => (dash ? `stroke-dasharray:${dash};` : '');
   const cls = `diagram-operation-chain-line${unverified ? ' diagram-operation-chain-line--unverified' : ''}`;
-  const title = unverified ? '<title>運用番号による裏付けなし（近接推定のみ）</title>' : '';
   return (
-    `<path d="${d1}" class="${cls}" style="stroke:${fromColor};${dashStyle(fromDash)}">${title}</path>` +
-    `<path d="${d2}" class="${cls}" style="stroke:${toColor};${dashStyle(toDash)}">${title}</path>`
+    `<path d="${d1}" class="${cls}" style="stroke:${fromColor};${dashStyle(fromDash)}"></path>` +
+    `<path d="${d2}" class="${cls}" style="stroke:${toColor};${dashStyle(toDash)}"></path>` +
+    chainLineHitAreaSvg(d1, unverified) +
+    chainLineHitAreaSvg(d2, unverified)
   );
 }
 
