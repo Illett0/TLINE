@@ -626,11 +626,24 @@ export function renderDiagram(
       // 出区/入区(等) marker vs. connecting line: see depotMarkerSvg's doc
       // comment — a boundary marker is drawn only when no chain partner was
       // found for that end, independent of the Operation field's own code.
-      if (showDepotMarkers && !hasIncomingChain) {
-        svgParts.push(depotMarkerSvg(firstPoint, 'origin', markerColor, origin && origin.depotWork));
+      //
+      // 2026-08-08指摘: 上記の条件だけだと、運用番号すら無い（＝ファイル側に
+      // 実質何のラベルも無い）端点にまで○/▽を機械的に描いてしまっていた
+      // （実データで検証: 460端点中460件が「チェーンなし」で描画対象になって
+      // いたが、そのうち368件＝80%はdepotWork（入出庫の実際の着発時刻記録）
+      // を伴っていなかった）。「明示的に入出庫だと分かる場合だけ描画してほし
+      // い」という要望を受け、depotWorkの有無をマーカー描画の条件に追加する
+      // ——運用番号ラベル（下のoriginNumber/terminalNumber、
+      // showDepotOperationNumbers）側のロジックは意図的に変更していない
+      // （プロジェクトオーナー指示: 内部的な運用番号ロジックは変更せず、
+      // 描画側だけを絞る）。そのため、運用番号だけあってdepotWorkが無い
+      // 端点は、○/▽マーカーは出ないが番号ラベルだけは残る、という組み合わせ
+      // になりうる。
+      if (showDepotMarkers && !hasIncomingChain && origin && origin.depotWork) {
+        svgParts.push(depotMarkerSvg(firstPoint, 'origin', markerColor, origin.depotWork));
       }
-      if (showDepotMarkers && !hasOutgoingChain) {
-        svgParts.push(depotMarkerSvg(lastPoint, 'terminal', markerColor, terminal && terminal.depotWork));
+      if (showDepotMarkers && !hasOutgoingChain && terminal && terminal.depotWork) {
+        svgParts.push(depotMarkerSvg(lastPoint, 'terminal', markerColor, terminal.depotWork));
       }
       // 入出庫運番（チェーンなし端点）のみここで描く。折り返し運番
       // （チェーンあり端点）は下のチェーンパスで弧の頂点にペアごとに
