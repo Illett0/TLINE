@@ -11,12 +11,60 @@
   },
   "scripts": {
     "start": "electron .",
+    "dist": "electron-builder",
     "setup": "allow-scripts"
   },
   "license": "SEE LICENSE IN LICENSE",
   "devDependencies": {
     "@lavamoat/allow-scripts": "5.1.0",
     "electron": "^43.0.0",
+    "electron-builder": "26.15.3",
     "playwright": "^1.61.1"
+  },
+  "build": {
+    "appId": "dev.illett.tline",
+    "productName": "TLINE",
+    "compression": "maximum",
+    "electronLanguages": [
+      "ja",
+      "en-US"
+    ],
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "lib/**/*",
+      "renderer/**/*",
+      "data/**/*",
+      "package.json",
+      "!node_modules/**/{test,tests,example,examples,*.md}",
+      "!**/*.map"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "TLINE",
+      "menuCategory": false
+    }
+  },
+  "lavamoat": {
+    "allowScripts": {
+      "electron-builder>app-builder-lib>electron-builder-squirrel-windows>electron-winstaller#5.4.0": true
+    }
   }
 }
