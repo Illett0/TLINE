@@ -162,10 +162,20 @@ function trainPolylineSegments(train, stations, maxDistanceKm, plotHeight, start
 // まだ仮説段階（車庫側の入出庫経路/番線と推測）のため、確定情報として
 // ではなく「参考情報」と明記した上でツールチップにのみ出す — 通常表示
 // には影響しない、控えめな追加情報。
-function depotMarkerSvg([x, y], kind, color, depotWork) {
+// `linkedTime` — fallback evidence for endpoints with no depotWork (see the
+// call site's comment): a code-3 `linked`+`time` Operation entry with no
+// depotWork sub-record. Confirmed 2026-08-08 against OuDiaSecond's own UI
+// (project owner check) that these single-timestamp entries are genuine
+// 出庫/入区 too, not just unresolved 次列車接続 guesses (1743, 671, 693,
+// 回1088 all independently confirmed) — so they get the same marker, with a
+// plainer tooltip (one timestamp instead of depotWork's arrival→departure
+// pair, since that's all this shape records).
+function depotMarkerSvg([x, y], kind, color, depotWork, linkedTime) {
   const title = depotWork
     ? `<title>入出庫(参考): ${depotWork.arrival}→${depotWork.departure}${depotWork.track != null ? ` (番線${depotWork.track}?)` : ''}</title>`
-    : '';
+    : linkedTime
+      ? `<title>入出庫(参考): ${linkedTime}</title>`
+      : '';
   if (kind === 'origin') return `<circle cx="${x}" cy="${y}" r="5" class="diagram-depot-marker" style="stroke:${color};">${title}</circle>`;
   const size = 6;
   return `<polygon points="${x - size},${y - size} ${x + size},${y - size} ${x},${y + size}" class="diagram-depot-marker" style="stroke:${color};">${title}</polygon>`;
@@ -632,18 +642,28 @@ export function renderDiagram(
       // （実データで検証: 460端点中460件が「チェーンなし」で描画対象になって
       // いたが、そのうち368件＝80%はdepotWork（入出庫の実際の着発時刻記録）
       // を伴っていなかった）。「明示的に入出庫だと分かる場合だけ描画してほし
-      // い」という要望を受け、depotWorkの有無をマーカー描画の条件に追加する
+      // い」という要望を受け、depotWorkの有無をマーカー描画の条件に追加した
       // ——運用番号ラベル（下のoriginNumber/terminalNumber、
       // showDepotOperationNumbers）側のロジックは意図的に変更していない
       // （プロジェクトオーナー指示: 内部的な運用番号ロジックは変更せず、
-      // 描画側だけを絞る）。そのため、運用番号だけあってdepotWorkが無い
-      // 端点は、○/▽マーカーは出ないが番号ラベルだけは残る、という組み合わせ
-      // になりうる。
-      if (showDepotMarkers && !hasIncomingChain && origin && origin.depotWork) {
-        svgParts.push(depotMarkerSvg(firstPoint, 'origin', markerColor, origin.depotWork));
+      // 描画側だけを絞る）。
+      //
+      // 2026-08-08続報: depotWork必須の条件は狭すぎた。1743（江ノ原信号場
+      // 終着、コード3+時刻18:07:50のみ、depotWorkなし）をOuDiaSecond本体で
+      // 確認したところ実際に入区表示されており、同じ「linked（コード3）+
+      // 時刻あり、depotWorkなし」の端点は全ファイル横断で375件（現状の
+      // depotWork保有90件より多い）。671・693・回1088でも同様に確認済み
+      // （すべて出庫/入区と確認）。linked+timeは「特定の前列車/次列車との
+      // 接続」の推測としては既に信頼できないと分かっている（issue #11の
+      // 回2010A調査）が、「入区/出区という事象自体が起きた」という、より
+      // 弱い主張については別物——今回の確認で後者は支持された。
+      const originEvidence = origin && (origin.depotWork || (origin.linked && origin.time));
+      const terminalEvidence = terminal && (terminal.depotWork || (terminal.linked && terminal.time));
+      if (showDepotMarkers && !hasIncomingChain && originEvidence) {
+        svgParts.push(depotMarkerSvg(firstPoint, 'origin', markerColor, origin.depotWork, origin.depotWork ? null : origin.time));
       }
-      if (showDepotMarkers && !hasOutgoingChain && terminal && terminal.depotWork) {
-        svgParts.push(depotMarkerSvg(lastPoint, 'terminal', markerColor, terminal.depotWork));
+      if (showDepotMarkers && !hasOutgoingChain && terminalEvidence) {
+        svgParts.push(depotMarkerSvg(lastPoint, 'terminal', markerColor, terminal.depotWork, terminal.depotWork ? null : terminal.time));
       }
       // 入出庫運番（チェーンなし端点）のみここで描く。折り返し運番
       // （チェーンあり端点）は下のチェーンパスで弧の頂点にペアごとに
