@@ -1,11 +1,52 @@
 :root {
+  color-scheme: dark; /* hints native controls (select's option list, scrollbars) to render dark instead of the OS default light, which was unreadable (white-on-white) — issue #8 */
   --color-bg: #14161c;
   --color-panel: #1b1e26;
   --color-text: #e8e8ec;
   --color-text-dim: #9599a6;
   --color-border: #2c303a;
   --color-accent: #4fa3ff;
+  --color-accent-text: #0c0f14;
   --color-warn: #e3a12c;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+}
+
+/* ライトテーマ（参考: Diagram/image/06123.png、OuDiaSecond風の白背景）。
+   #app-headerのテーマ切り替えセレクトがdocument.documentElement.dataset.theme
+   を切り替える。列車種別の色自体はOuDiaSecondの色データそのまま（ダーク
+   テーマ向けの明度補正はrenderer/diagramView.mjs側でテーマに応じてスキップ
+   する）。 */
+:root[data-theme="light"] {
+  color-scheme: light;
+  --color-bg: #f5f6f8;
+  --color-panel: #ffffff;
+  --color-text: #1a1c22;
+  --color-text-dim: #5a5f6b;
+  --color-border: #c9ccd3;
+  --color-accent: #2166c4;
+  --color-warn: #b5720a;
+}
+
+/* クラシックテーマ（issue #8「クラシックモード(oudUIをがっつり参考に)」）。
+   ライトテーマと同じ白背景に加え、OuDiaSecondの実際の画面（角のない矩形の
+   パネル・ボタン、細い罫線、日眼盛り(10分刻み)入りのグリッド）に寄せる。
+   コード非流用の原則のもと、見た目・配色のみを参考にした独自実装（NOTES.md
+   「ライセンスについて」参照）。 */
+:root[data-theme="classic"] {
+  color-scheme: light;
+  --color-bg: #ffffff;
+  --color-panel: #ffffff;
+  --color-text: #000000;
+  --color-text-dim: #444444;
+  --color-border: #888888;
+  --color-accent: #1a56b0;
+  --color-accent-text: #ffffff;
+  --color-warn: #c0392b;
+  --radius-sm: 0;
+  --radius-md: 0;
+  --radius-lg: 0;
 }
 
 * { box-sizing: border-box; }
@@ -24,21 +65,115 @@ body {
   padding: 10px 20px;
   background: var(--color-panel);
   border-bottom: 1px solid var(--color-border);
+  /* タブ（計画/運転整理/実績/仕業）を常時画面上部に固定してほしいという
+     要望（2026-08-08）。ページ全体はbody/mainに高さ制限が無くコンテンツ量
+     に応じて素直に伸びる（ダイヤグラム・タイムテーブル自体は別途
+     .diagram-container/.stop-table-scroll内で個別にスクロールする）ため、
+     ヘッダーごとwindowスクロールに対してstickyにする。 */
+  position: sticky;
+  top: 0;
+  z-index: 10;
 }
 #app-header h1 { font-size: 16px; margin: 0; letter-spacing: 0.05em; }
 
 #tabs { display: flex; gap: 4px; }
+
+#file-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: auto;
+  font-size: 12px;
+}
+#current-file-label { color: var(--color-text-dim); max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#file-toolbar button,
+#file-toolbar select {
+  background: transparent;
+  border: 1px solid var(--color-border);
+  color: var(--color-text);
+  padding: 5px 10px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: 12px;
+}
+#file-toolbar button:disabled { color: var(--color-text-dim); cursor: not-allowed; opacity: 0.5; }
+#file-toolbar button:not(:disabled):hover { background: rgba(255, 255, 255, 0.06); }
+.hidden { display: none !important; }
+
+#oud-import-panel {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 20px;
+  background: var(--color-panel);
+  border-bottom: 1px solid var(--color-border);
+  font-size: 12px;
+}
+#oud-import-panel label { display: flex; align-items: center; gap: 6px; color: var(--color-text-dim); }
+#oud-import-panel select,
+#oud-import-panel button {
+  background: transparent;
+  border: 1px solid var(--color-border);
+  color: var(--color-text);
+  padding: 5px 10px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: 12px;
+}
+#oud-import-label { color: var(--color-text-dim); }
+
+/* 通知トースト（2026-07-15、window.alert()の置き換え）。ネイティブalert()は
+   Electron上でモーダルダイアログとしてOS側に出るため、非表示ウィンドウ検証
+   （main.jsのTLINE_TEST_HIDDEN_WINDOW）と相性が悪いのに加え、Windows環境で
+   ダイアログを閉じた後にレンダラーへのポインタ入力が戻らなくなる既知の
+   Electronの不具合パターンと一致する報告（「最近使ったファイルのクリック
+   判定が吸われている」）があった——OSレベルのモーダルが原因なら、CDP経由の
+   合成クリックでは再現できない（実際のOS入力キューを経由しないため）。
+   ネイティブダイアログを完全に避けるため、画面右下に浮かぶ非モーダルの
+   トースト表示に置き換える。position:fixedで自身の領域しか専有せず、
+   pointer-eventsも他要素をブロックしない。 */
+.app-toast {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  max-width: 420px;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  background: var(--color-panel);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+  font-size: 12px;
+  line-height: 1.5;
+  z-index: 100;
+}
+.app-toast--error { border-color: var(--color-warn); }
+#app-toast-message { white-space: pre-line; }
+#app-toast-close {
+  background: transparent;
+  border: none;
+  color: var(--color-text-dim);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 0;
+  margin-left: auto;
+}
+#app-toast-close:hover { color: var(--color-text); }
+
 .tab-button {
   background: transparent;
   border: none;
   color: var(--color-text-dim);
   padding: 8px 16px;
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   cursor: pointer;
   font-size: 13px;
 }
 .tab-button:hover { background: rgba(255, 255, 255, 0.06); }
-.tab-button.active { background: var(--color-accent); color: #0c0f14; font-weight: 600; }
+.tab-button.active { background: var(--color-accent); color: var(--color-accent-text); font-weight: 600; }
 
 main { padding: 20px; }
 
@@ -47,17 +182,74 @@ main { padding: 20px; }
 
 .panel-note { color: var(--color-text-dim); font-size: 12px; margin: 4px 0 16px; }
 
+/* 運転整理タブの番線競合警告（issue #4、findNewTrackConflicts）。空の場合は
+   :emptyでpadding/borderごと消え、DOMに残っても余白が発生しない。 */
+.dispatch-conflicts-warning {
+  border: 1px solid var(--color-warn);
+  border-radius: 4px;
+  padding: 8px 12px;
+  margin: 8px 0;
+  font-size: 13px;
+}
+.dispatch-conflicts-warning ul { margin: 4px 0 0; padding-left: 20px; }
+#dispatch-conflicts:empty { display: none; }
+
+.duty-swap-suggestion { margin-top: 4px; font-size: 12px; }
+.duty-swap-suggestion button { margin: 2px 4px 2px 0; }
+
+/* ズーム中の再描画スピナー（2026-08-08、ホイールズーム連打時のフリーズ
+   感への対応）。ダイヤグラムのSVGはcontainer.innerHTMLを丸ごと差し替える
+   ため、スピナー自体はcontainer内ではなく親のdiagram-wrapperに置く（中に
+   置くと次の再描画で消えてしまう）。 */
+.diagram-wrapper { position: relative; }
+.diagram-loading-spinner {
+  display: none;
+  position: absolute;
+  top: 20px;
+  right: 20px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 3px solid var(--color-border);
+  border-top-color: var(--color-accent);
+  animation: diagram-spin 0.7s linear infinite;
+  pointer-events: none;
+  z-index: 2;
+}
+.diagram-loading-spinner.is-visible { display: block; }
+@keyframes diagram-spin {
+  to { transform: rotate(360deg); }
+}
+
 .diagram-container {
   background: var(--color-panel);
   border: 1px solid var(--color-border);
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   padding: 12px;
   overflow: auto;
+  /* 駅数の多いダイヤグラムは元々ここに上限がなく、コンテナ自体が縦に
+     際限なく伸びてページ全体がスクロールする構造だった。それだと右クリック
+     ドラッグでの縦方向パン（renderer/app.mjsのsetupDiagramPanZoom）が
+     「コンテナ自身のスクロール位置」を操作しても何も起きない（縦のはみ出し
+     はページ側で起きるため）ので、コンテナ自体を縦にも有限の高さへ収めて
+     内部スクロールにする（2026-07-14）。 */
+  max-height: 70vh;
   margin-bottom: 16px;
+  cursor: grab; /* 右クリック長押しでパンできることを示す（renderer/app.mjsのsetupDiagramPanZoom） */
 }
+.diagram-container--dragging { cursor: grabbing; }
 
 .diagram-svg { display: block; }
 .diagram-grid-line { stroke: var(--color-border); stroke-width: 1; }
+/* 支線の分岐駅（駅名がリスト後方に再登場する行、issue #6）を目立たせる
+   —— 距離軸上の位置自体は参考画像通り本線の続きに配置したまま、境目だけ
+   分かるように太く・破線にする。 */
+.diagram-grid-line--branch-seam { stroke: var(--color-text-dim); stroke-width: 1.5; stroke-dasharray: 6, 3; }
+/* 10分刻みの補助目盛り。diagramView.mjsがtheme==='classic'の時だけこの要素
+   自体を描画する（ダーク/ライトはDOMに存在しない）。OuDiaSecondの実画面
+   （Diagram/image/06123.png）は主要目盛り(時)より細かい罫線が破線で入って
+   いるため、クラシックテーマのみ破線で再現。 */
+.diagram-grid-line-minor { stroke: var(--color-border); stroke-width: 0.5; stroke-dasharray: 2, 3; opacity: 0.8; }
 .diagram-station-label,
 .diagram-hour-label { fill: var(--color-text-dim); font-size: 11px; }
 .diagram-train-line {
@@ -72,9 +264,84 @@ main { padding: 20px; }
   stroke-dasharray: 5, 4;
 }
 
+/* fill:noneだと既定のpointer-events:visiblePaintedでは1.5pxの輪郭線しか
+   ホバー判定されず、depotWorkツールチップ（<title>、diagramView.mjsの
+   depotMarkerSvg）がほぼ反応しなかった（2026-07-16報告）。pointer-events:
+   allで塗りの有無に関わらず図形全体をヒット判定させ、○/▽の内側もホバー
+   できるようにする。 */
+.diagram-depot-marker { fill: none; stroke-width: 1.5; pointer-events: all; }
+.diagram-operation-label { font-size: 10px; }
+.diagram-train-number-label { font-size: 10px; font-weight: 600; }
+/* 折り返しのつなぎ弧（同一番線・近接時刻で検出した列車間の折り返し接続、
+   lib/oudParser.jsのinferOperationChains参照）。06123.pngに合わせて駅線の
+   外側に膨らむ丸いキャップ状の<path>で描く（diagramView.mjsの
+   turnbackArcSvg）。色・破線は前半/後半それぞれの列車の種別スタイルを
+   style=""でインライン指定するので、ここでは列車線と同じ太さと
+   fill:none（pathなので塗りつぶさない）だけを決める。 */
+.diagram-operation-chain-line { fill: none; stroke-width: 2; }
+/* issue #11「番号なし運用同士の誤接続は検証手段がない」— 運用番号による
+   裏付けが一件もない弧（近接ヒューリスティックのみでの接続）を薄く表示し、
+   確証のある弧と見分けられるようにする。stroke-dasharrayは種別スタイルの
+   インラインstyle=""で上書きされてしまうためopacityで表現する
+   （diagramView.mjsのturnbackArcSvg参照）。 */
+.diagram-operation-chain-line--unverified { opacity: 0.45; }
+
+.diagram-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  padding: 0 4px 10px;
+  font-size: 11px;
+  color: var(--color-text-dim);
+}
+.diagram-legend-item { display: flex; align-items: center; gap: 5px; }
+.diagram-legend-swatch { display: block; }
+
+.diagram-zoom-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+  font-size: 12px;
+  color: var(--color-text-dim);
+}
+.diagram-zoom-control input[type="range"] { width: 140px; }
+.diagram-zoom-control label { display: flex; align-items: center; gap: 4px; margin-left: 12px; cursor: pointer; }
+
+/* タイムテーブル（issue #8「見やすくして」、OuDiaSecondの時刻表グリッドを
+   参考にした改善、2026-07-14）: 列車数・駅数が多いと表が縦横どちらにも
+   長くなりすぎるため、駅名列（左）と列車番号などのヘッダー行（上）の両方を
+   画面に固定したまま本体だけスクロールできるスプレッドシート的な見た目に
+   した。stopTableHtml/actualTableHtml（renderer/app.mjs）が<thead>/<tbody>
+   で組むようになったので、そこにCSSでスティッキー固定・縞模様・行ホバー
+   強調を掛けている。 */
+.stop-table-scroll {
+  overflow: auto;
+  max-height: 55vh;
+  margin-bottom: 16px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+/* タイムテーブルの上り/下り切り替え（2026-08-08要望）。.tab-buttonと同じ
+   見た目のトグルペア。 */
+.timetable-direction-toggle { display: flex; gap: 4px; margin-bottom: 8px; }
+.timetable-direction-button {
+  background: transparent;
+  border: 1px solid var(--color-border);
+  color: var(--color-text-dim);
+  padding: 4px 14px;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  font-size: 12px;
+}
+.timetable-direction-button:hover { background: rgba(255, 255, 255, 0.06); }
+.timetable-direction-button.active { background: var(--color-accent); color: var(--color-accent-text); font-weight: 600; border-color: var(--color-accent); }
 .stop-table {
   border-collapse: collapse;
-  width: 100%;
+  /* width:100%だと列車数が少ないダイヤで各列が不要に間延びする
+     （2026-08-08指摘）。内容に応じた固定長のまま、はみ出す分だけ
+     .stop-table-scrollが横スクロールする形にする。 */
   font-size: 12px;
 }
 .stop-table th,
@@ -82,20 +349,91 @@ main { padding: 20px; }
   border: 1px solid var(--color-border);
   padding: 6px 10px;
   text-align: center;
+  white-space: nowrap;
+  background: var(--color-panel); /* スティッキー列/行の下を他のセルが通り抜けて見えないよう、既定で不透明にしておく */
 }
-.stop-table th { background: var(--color-panel); color: var(--color-text-dim); font-weight: 500; }
+.stop-table th { color: var(--color-text-dim); font-weight: 500; }
+/* ヘッダー行（列車番号等）を上端に固定。左上角（「駅」/「列車」セル）は
+   ヘッダー行・駅名列どちらの固定にも属するため、両方より前面に来るよう
+   z-indexを一段高くする。 */
+.stop-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  font-weight: 600;
+}
+.stop-table thead th:first-child { left: 0; z-index: 3; }
+.stop-table tbody th:first-child {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+}
+/* 縞模様・行ホバー強調。sticky要素の下から他セルが透けないよう、透過色
+   ではなくcolor-mix()で不透明な色を都度計算する（テーマごとの背景色に
+   自動追随）。 */
+.stop-table tbody tr:nth-child(even) > * { background: color-mix(in srgb, var(--color-panel) 92%, var(--color-text) 8%); }
+.stop-table tbody tr:hover > * { background: color-mix(in srgb, var(--color-panel) 80%, var(--color-accent) 20%); }
+
+/* 駅×列車の1マス内で着/発（・番線）を縦に積む表示（2026-07-14、
+   renderer/app.mjsのstopCellHtml参照）。3区分:
+   - stop-cell--major（主要駅）: 着/発/番線の3行
+   - stop-cell--basic（区分不明、旧来の"/"区切りの後継）: 着/発の2行
+   - stop-cell--general（一般駅）: 発車時刻のみの単一セル（従来のtd同様）
+   3行/2行の場合は<td>自体のpaddingを0にし、中の.stop-cell-row側で個別に
+   paddingと仕切り線を持たせる（背景色は<td>のまま透過で見せるので、縞模様・
+   行ホバー強調（上記）はここでも自動的に効く）。 */
+.stop-table td.stop-cell--major,
+.stop-table td.stop-cell--basic {
+  padding: 0;
+}
+/* テキストノードを一切持たない空div（値の無い着/発マス）はline-heightに
+   よる行ボックス自体が発生せず、paddingぶんの高さしか持たない——同じ
+   <tr>内で「空の行を含むセル」と「全部値のあるセル」が混在すると、セル
+   ごとの合計高さが変わり、<td>の既定vertical-align:middleで縦位置がずれる
+   （2026-08-08、実データスクリーンショットで発覚）。
+   min-height（line-heightと同じem基準の計算値）で一度直したが、line-height
+   由来の自動算出とmin-heightの算出が別経路になるため、12pxフォント×1.3=
+   15.6pxのような端数でブラウザの丸め方がわずかに食い違い、1px単位のズレが
+   残った。line-heightに頼らず、行の高さそのものを固定値にする（プロジェクト
+   オーナー提案: 「枠を固定してその中に記述する」）ことで、中身の有無や
+   line-heightの端数計算に一切左右されない、常に同じ整数pxの高さにする。 */
+.stop-cell-row { padding: 3px 10px; line-height: 1.3; height: 22px; }
+.stop-cell-row + .stop-cell-row { border-top: 1px solid var(--color-border); }
+.stop-cell-row--track { color: var(--color-text-dim); font-size: 10px; height: 19px; }
+/* 列車種別色をタイムテーブルの文字色にも反映する（2026-08-08要望）。
+   renderer/app.mjsのstopCellHtmlが`--train-color`カスタムプロパティを
+   <td>にインラインで渡す（colorを直接指定すると詳細度でstop-cell--pass
+   の薄グレーに勝ってしまうため、通常のクラスと同じ詳細度になるよう
+   カスタムプロパティ経由にしている——このルールとstop-cell--passが同じ
+   詳細度になるよう、両方とも単一クラスセレクタ`.stop-table td.stop-cell`
+   系で揃えてあり、後に書いた方（下のstop-cell--pass）が優先される）。
+   .stop-cell-row--track（下記）は種別色を継承せず常にdim固定。 */
+.stop-table td.stop-cell { color: var(--train-color, inherit); }
 .stop-table td input {
   width: 90px;
   background: var(--color-bg);
   border: 1px solid var(--color-border);
   color: var(--color-text);
   padding: 3px 5px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   font-size: 12px;
   text-align: center;
 }
 .stop-table td.delta-positive { color: var(--color-warn); }
 .stop-table td.delta-negative { color: var(--color-accent); }
+/* 実績タブ: 遅延の自動補完で埋まったセル（issue #5）。手入力（通常色）と
+   見分けられるよう淡色＋斜体にする。手入力で訂正すると通常表示に戻る。 */
+.stop-table input.actual-input--auto { color: var(--color-text-dim); font-style: italic; }
+
+/* 通過駅（駅扱いコード=2、renderer/app.mjsのstopCellHtml参照、2026-08-08
+   要望）。実際に停車する駅と見た目で区別できるよう薄いグレーにする——
+   `--color-text-dim`（番線行や実績自動補完セルにも使う「少し薄い」色）
+   よりもう一段薄くしてほしいとのフィードバックを受け、背景色（panel）に
+   寄せてさらに淡くする。 */
+.stop-table td.stop-cell--pass,
+.stop-table td.stop-cell--pass .stop-cell-row {
+  color: color-mix(in srgb, var(--color-text-dim) 55%, var(--color-panel) 45%);
+}
 
 .dispatch-form {
   display: flex;
@@ -117,16 +455,16 @@ main { padding: 20px; }
   border: 1px solid var(--color-border);
   color: var(--color-text);
   padding: 6px 8px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   font-size: 13px;
 }
 .dispatch-form button {
   background: var(--color-accent);
   border: none;
-  color: #0c0f14;
+  color: var(--color-accent-text);
   font-weight: 600;
   padding: 8px 16px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
   font-size: 13px;
 }
