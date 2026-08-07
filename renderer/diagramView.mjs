@@ -648,7 +648,7 @@ export function renderDiagram(
       // （プロジェクトオーナー指示: 内部的な運用番号ロジックは変更せず、
       // 描画側だけを絞る）。
       //
-      // 2026-08-08続報: depotWork必須の条件は狭すぎた。Nootのある実例
+      // 2026-08-08続報: depotWork必須の条件は狭すぎた。Nooutのある実例
       // （終着、コード3+時刻のみ、depotWorkなし——詳細はNOTES.md）を
       // OuDiaSecond本体で確認したところ実際に入区表示されており、同じ
       // 「linked（コード3）+時刻あり、depotWorkなし」の端点は全ファイル
