@@ -290,8 +290,8 @@ function stopCellHtml(stop, station, isOrigin, color) {
     // trackLabel（lib/oudParser.jsのresolveTrackLabel）— その駅自身が宣言
     // した番線名（TrackRyakusyou優先）に解決済みの値。丸数字(①②③)・上本/
     // 下本・X/Y/Eのような非数値ラベルの駅では生の`$N`番号をそのまま出すと
-    // 実物と食い違う（2026-07-15、プロジェクトオーナーからの実例で確認:
-    // 大道寺の生値5は実際は「③」＝3番線）。解決できなかった場合（宣言なし
+    // 実物と食い違う（2026-07-15、プロジェクトオーナーからの実例で確認
+    // ——詳細はNOTES.md参照）。解決できなかった場合（宣言なし
     // の駅・手作成の計画データ等）は従来通り生の数字にフォールバック。
     const track = stop ? (stop.trackLabel ?? (stop.track != null ? `${stop.track}` : '')) : '';
     return (

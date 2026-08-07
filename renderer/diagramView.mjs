@@ -165,9 +165,9 @@ function trainPolylineSegments(train, stations, maxDistanceKm, plotHeight, start
 // `linkedTime` — fallback evidence for endpoints with no depotWork (see the
 // call site's comment): a code-3 `linked`+`time` Operation entry with no
 // depotWork sub-record. Confirmed 2026-08-08 against OuDiaSecond's own UI
-// (project owner check) that these single-timestamp entries are genuine
-// 出庫/入区 too, not just unresolved 次列車接続 guesses (1743, 671, 693,
-// 回1088 all independently confirmed) — so they get the same marker, with a
+// (project owner check, several Noout examples — see NOTES.md) that these
+// single-timestamp entries are genuine 出庫/入区 too, not just unresolved
+// 次列車接続 guesses — so they get the same marker, with a
 // plainer tooltip (one timestamp instead of depotWork's arrival→departure
 // pair, since that's all this shape records).
 function depotMarkerSvg([x, y], kind, color, depotWork, linkedTime) {
@@ -254,8 +254,8 @@ function turnbackGeometry(fromEnd, fromInner, toStart, toInner) {
 // but the one thing this project CAN show is which arcs it can't verify.
 // Rendered at reduced opacity via a CSS class (not stroke-dasharray, which
 // the inline train-type style above would just override) plus a hover
-// tooltip explaining why, so a user auditing a garage-like station (e.g. the
-// issue's 江ノ原信号場 example) can visually tell "confirmed continuation"
+// tooltip explaining why, so a user auditing a garage-like station (e.g. a
+// Noout example — see NOTES.md) can visually tell "confirmed continuation"
 // from "best guess" instead of every arc reading with equal confidence.
 // unverified（裏付けなし）な弧は、実際に見えるストローク幅（2px）ぴったり
 // にカーソルを合わせないとツールチップが出ない（SVGのfill:none要素は既定
@@ -417,7 +417,7 @@ function legendHtml(trains, resolveColor) {
   const types = [...seen.values()];
   // OuDiaSecond commonly defines several distinct types that share one
   // abbreviation (e.g. 回送/回送(時刻変更)/臨時回送 all abbreviate to 回送,
-  // differing only in line style) — real files (館浜野球臨司令v0421.oud2)
+  // differing only in line style) — real files (a Noout sample, see NOTES.md)
   // can use several of them in the same Dia, which made the legend show
   // "回送" two or three times with no way to tell the rows apart besides a
   // subtle dash pattern. Fall back to the full name only for the colliding
@@ -648,12 +648,12 @@ export function renderDiagram(
       // （プロジェクトオーナー指示: 内部的な運用番号ロジックは変更せず、
       // 描画側だけを絞る）。
       //
-      // 2026-08-08続報: depotWork必須の条件は狭すぎた。1743（江ノ原信号場
-      // 終着、コード3+時刻18:07:50のみ、depotWorkなし）をOuDiaSecond本体で
-      // 確認したところ実際に入区表示されており、同じ「linked（コード3）+
-      // 時刻あり、depotWorkなし」の端点は全ファイル横断で375件（現状の
-      // depotWork保有90件より多い）。671・693・回1088でも同様に確認済み
-      // （すべて出庫/入区と確認）。linked+timeは「特定の前列車/次列車との
+      // 2026-08-08続報: depotWork必須の条件は狭すぎた。Nootのある実例
+      // （終着、コード3+時刻のみ、depotWorkなし——詳細はNOTES.md）を
+      // OuDiaSecond本体で確認したところ実際に入区表示されており、同じ
+      // 「linked（コード3）+時刻あり、depotWorkなし」の端点は全ファイル
+      // 横断で375件（現状のdepotWork保有90件より多い）。他の複数の実例でも
+      // 同様に確認済み（すべて出庫/入区と確認）。linked+timeは「特定の前列車/次列車との
       // 接続」の推測としては既に信頼できないと分かっている（issue #11の
       // 回2010A調査）が、「入区/出区という事象自体が起きた」という、より
       // 弱い主張については別物——今回の確認で後者は支持された。
