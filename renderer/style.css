@@ -399,6 +399,13 @@ main { padding: 20px; }
    line-heightの端数計算に一切左右されない、常に同じ整数pxの高さにする。 */
 .stop-cell-row { padding: 3px 10px; line-height: 1.3; height: 22px; }
 .stop-cell-row + .stop-cell-row { border-top: 1px solid var(--color-border); }
+/* 始発駅の着欄・終着駅の発欄（renderer/app.mjsのstopCellHtml、isOrigin/
+   isTerminus）。値が無いことが分かっている行なので、上の仕切り線まで
+   残っていると「空の枠」が浮いて見える（2026-08-08指摘）。border-top有無は
+   box-sizing:border-boxのため行の高さに影響しないので、揃えるための固定
+   heightはそのまま維持しつつ線だけ消せる。 */
+.stop-cell-row--blank { border-top: none; }
+.stop-cell-row--blank + .stop-cell-row { border-top: none; }
 .stop-cell-row--track { color: var(--color-text-dim); font-size: 10px; height: 19px; }
 /* 列車種別色をタイムテーブルの文字色にも反映する（2026-08-08要望）。
    renderer/app.mjsのstopCellHtmlが`--train-color`カスタムプロパティを
