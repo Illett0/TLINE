@@ -1,6 +1,6 @@
 {
   "name": "tline",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "OuDia/OuDiaSecondのUI・機能を参考にした、運転整理（列車のn秒単位でのずらし）と実績記録を扱う運行管理補助デスクトップアプリ（計画・運転整理・実績の3タブ構成）",
   "private": true,
   "main": "main.js",
