@@ -260,7 +260,7 @@ function resolveTrainColor(hex) {
 // クラスより詳細度が高くなって上書きしてしまう（通過駅は種別色より薄グレー
 // 優先にしたい）ため、カスタムプロパティ経由で通常のクラス指定と同じ詳細度
 // に揃えている。
-function stopCellHtml(stop, station, isOrigin, color) {
+function stopCellHtml(stop, station, isOrigin, isTerminus, color, rowFlags = {}) {
   // 通過駅（駅扱いコード=2、lib/oudParser.jsのstopTypeFromCode参照）。着=発が
   // 同時刻になる単一時刻の停車と見た目上区別できなかったのを、コード自体を
   // 解読することで初めて判別できるようになった（2026-08-08要望）。薄いグレー
@@ -270,7 +270,13 @@ function stopCellHtml(stop, station, isOrigin, color) {
   const isPass = stop?.stopType === 'pass';
   const timeOrPassMark = (value) => value || (isPass ? 'レ' : '');
   const arr = stop && !isOrigin ? timeOrPassMark(stop.arrival) : '';
-  const dep = stop ? timeOrPassMark(stop.departure) : '';
+  // isTerminus（その列車自身の最終停車、t.stops[last]）も起点側の着欄と対称に
+  // 空欄化する（2026-08-08要望「一番最後の駅の発時刻は書かない方が綺麗」）。
+  // decodeEkiJikoku（lib/oudParser.js）の単一時刻フォールバックは終着でも
+  // 同様に発=着を捏造するため、起点の着欄を空欄化したときと同じ理由でここも
+  // 「値の再解釈」ではなく単純に空欄にする（generalスケールは直後の
+  // `dep || arr`で着時刻に自動フォールバックする）。
+  const dep = stop && !isTerminus ? timeOrPassMark(stop.departure) : '';
   const passClass = isPass ? ' stop-cell--pass' : '';
   const colorStyle = color ? ` style="--train-color:${color}"` : '';
 
@@ -284,8 +290,25 @@ function stopCellHtml(stop, station, isOrigin, color) {
   // <td>の既定vertical-align（middle）で縦位置がずれる（2026-08-08指摘。
   // 当日1回目の修正は始発駅の着欄だけが対象で、「駅を通らない」マス（従来
   // 早期returnで空の<td>のみを返していた）は未対応のまま残っていたのが
-  // 「まだ揃っていない」の真因だった）。
-  const arrRow = `<div class="stop-cell-row stop-cell-row--arr">${arr}</div>`;
+  // 「まだ揃っていない」の真因だった）。これは同じ<tr>内で列（列車）ごとに
+  // 行数が食い違う場合の話——駅行自体を通しで見て「その駅で本当の着（また
+  // は発）を持つ列車が１本も無い」と分かっているなら、話は別（そのマスを
+  // 含むtrの全列が同じ行数になり、食い違いが起きない）。
+  // `rowFlags.hideArrival`/`hideDeparture`（呼び出し元stopTableHtmlが駅行
+  // 単位で判定）はまさにこのケース——典型的には表の一番最初の駅（着は絶対
+  // に存在しない）・一番最後の駅（発は絶対に存在しない）。行自体を消し、
+  // テキストを空にするだけでは残っていた「値の無い枠」（2026-08-08
+  // スクリーンショットでの指摘）を完全に無くす。それ以外（同じ駅行に本物の
+  // 着／発を持つ列車が混在する行）は従来通りテキストだけを空にする——
+  // `--blank`修飾クラスでその行と直後の行の上border-topだけを消し
+  // （box-sizing:border-boxなのでborder-top有無は行の高さに影響しない）、
+  // 行数はそろえたまま「枠」だけ目立たなくする。
+  const arrRow = rowFlags.hideArrival
+    ? ''
+    : `<div class="stop-cell-row stop-cell-row--arr${isOrigin ? ' stop-cell-row--blank' : ''}">${arr}</div>`;
+  const depRow = rowFlags.hideDeparture
+    ? ''
+    : `<div class="stop-cell-row stop-cell-row--dep${isTerminus ? ' stop-cell-row--blank' : ''}">${dep}</div>`;
   if (station.scale === 'major') {
     // trackLabel（lib/oudParser.jsのresolveTrackLabel）— その駅自身が宣言
     // した番線名（TrackRyakusyou優先）に解決済みの値。丸数字(①②③)・上本/
@@ -298,11 +321,11 @@ function stopCellHtml(stop, station, isOrigin, color) {
       `<td class="stop-cell stop-cell--major${passClass}"${colorStyle}>` +
       arrRow +
       `<div class="stop-cell-row stop-cell-row--track">${track}</div>` +
-      `<div class="stop-cell-row stop-cell-row--dep">${dep}</div>` +
+      depRow +
       `</td>`
     );
   }
-  return `<td class="stop-cell stop-cell--basic${passClass}"${colorStyle}>${arrRow}<div class="stop-cell-row stop-cell-row--dep">${dep}</div></td>`;
+  return `<td class="stop-cell stop-cell--basic${passClass}"${colorStyle}>${arrRow}${depRow}</td>`;
 }
 
 // `direction` — 'down'（下り）| 'up'（上り）。2026-08-08要望「タイムテーブル、
@@ -322,11 +345,22 @@ function stopTableHtml(diagram, { trainOverride, direction } = {}) {
     .join('')}</tr></thead>`;
   const rows = stations
     .map((station) => {
-      const cells = trains
-        .map((t) => {
-          const stop = t.stops.find((s) => s.stationId === station.id);
-          return stopCellHtml(stop, station, stop === t.stops[0], resolveTrainColor(t.trainType?.color));
-        })
+      const stopsHere = trains.map((t) => {
+        const stop = t.stops.find((s) => s.stationId === station.id);
+        return { t, stop, isOrigin: stop === t.stops[0], isTerminus: stop === t.stops[t.stops.length - 1] };
+      });
+      // その駅行に「本物の着」「本物の発」を持つ列車が１本も無い場合
+      // （典型例：表の一番最初の駅には本物の着が、一番最後の駅には本物の発
+      // が原理的に存在しない）は、着欄／発欄をこの駅行のマス全部からまとめて
+      // 消す——同じtr内の全列が同じ行数のまま減るので、2026-08-08に直した
+      // 「行数がマスごとに食い違って縦位置がずれる」問題は再発しない
+      // （stopCellHtml側のrowFlagsコメント参照）。
+      const hideArrival = stopsHere.every(({ stop, isOrigin }) => !stop || isOrigin);
+      const hideDeparture = stopsHere.every(({ stop, isTerminus }) => !stop || isTerminus);
+      const cells = stopsHere
+        .map(({ t, stop, isOrigin, isTerminus }) =>
+          stopCellHtml(stop, station, isOrigin, isTerminus, resolveTrainColor(t.trainType?.color), { hideArrival, hideDeparture })
+        )
         .join('');
       // branchFromStationId (lib/oudParser.js, issue #6): this row is a
       // branch's re-listing of an earlier station (same name reappears
