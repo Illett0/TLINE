@@ -149,6 +149,9 @@ const el = {
   appToast: document.getElementById('app-toast'),
   appToastMessage: document.getElementById('app-toast-message'),
   appToastClose: document.getElementById('app-toast-close'),
+  btnPrivacyInfo: document.getElementById('btn-privacy-info'),
+  privacyPanel: document.getElementById('privacy-panel'),
+  privacyPanelClose: document.getElementById('privacy-panel-close'),
   dutySegmentForm: document.getElementById('duty-segment-form'),
   dutySegmentTrain: document.getElementById('duty-segment-train'),
   dutySegmentFrom: document.getElementById('duty-segment-from'),
@@ -178,6 +181,26 @@ el.appToastClose.addEventListener('click', () => {
   clearTimeout(toastHideTimer);
   el.appToast.classList.add('hidden');
 });
+
+// ---------- データの扱いについての明示（非モーダル、style.cssの
+// .privacy-panelコメント参照） ----------
+//
+// 汎用プロダクト化に向けて、自分以外のユーザーが実運行データ（Noout級の
+// 機微なデータ）を読み込ませる可能性を踏まえ、「ローカルで完結し外部送信
+// しない」ことを初回起動時に明示する。localStorageのtline-themeと同じ
+// パターンで既読フラグを永続化——一度見せたら次回以降は自動表示しない。
+// ヘッダーの🔒ボタンはいつでも同じ文面を見返せる恒常的な導線として残す。
+const PRIVACY_NOTICE_SEEN_KEY = 'tline-privacy-notice-seen';
+el.btnPrivacyInfo.addEventListener('click', () => {
+  el.privacyPanel.classList.toggle('hidden');
+});
+el.privacyPanelClose.addEventListener('click', () => {
+  el.privacyPanel.classList.add('hidden');
+});
+if (localStorage.getItem(PRIVACY_NOTICE_SEEN_KEY) !== '1') {
+  el.privacyPanel.classList.remove('hidden');
+  localStorage.setItem(PRIVACY_NOTICE_SEEN_KEY, '1');
+}
 
 // ---------- Tabs ----------
 //
@@ -340,7 +363,13 @@ function stopTableHtml(diagram, { trainOverride, direction } = {}) {
   const header = `<thead><tr><th>駅</th>${trains
     .map((t) => {
       const color = resolveTrainColor(t.trainType?.color);
-      return `<th${color ? ` style="color:${color}"` : ''}>${t.number}</th>`;
+      // timesConfident:false（renderer/diagramView.mjsの薄表示と同じ由来、
+      // lib/oudParser.jsのdecodeEkiJikoku参照）をタイムテーブル側にも示す。
+      const unconfidentMark =
+        t.timesConfident === false
+          ? '<span class="stop-table-unconfident-mark" title="時刻の解読精度が低い可能性があります（非単調な時刻列）">⚠</span>'
+          : '';
+      return `<th${color ? ` style="color:${color}"` : ''}>${unconfidentMark}${t.number}</th>`;
     })
     .join('')}</tr></thead>`;
   const rows = stations

@@ -585,11 +585,20 @@ export function renderDiagram(
       resolvedColor && !isHighlighted
         ? ` style="stroke:${resolvedColor};${train.trainType.dashArray ? `stroke-dasharray:${train.trainType.dashArray};` : ''}"`
         : '';
+    // timesConfident:false（lib/oudParser.jsのdecodeEkiJikoku、非単調な
+    // 時刻列など解読に自信が持てなかった列車）を、運用つなぎの
+    // unverified表示（同ファイルのturnbackArcSvg）と同じ「薄く＋ホバーで
+    // 理由を説明」パターンで示す。汎用プロダクト化に向けて、他人の
+    // チューニングしていないファイルを読ませたときに「この時刻は推定より
+    // 怪しい」と気付けるようにする目的（NOTES.md参照）。
+    // 厳密に===falseで判定する。timesConfidentはoud取り込み由来の列車にしか
+    // 付かないフィールドで、サンプル/手入力データではundefinedのまま——
+    // !train.timesConfidentだとそれらまで「低精度」と誤判定してしまう。
+    const unconfidentTitle = train.timesConfident === false ? '<title>時刻の解読精度が低い可能性があります（非単調な時刻列）</title>' : '';
     for (const points of segments) {
       const d = points.map((p) => p.join(',')).join(' ');
-      svgParts.push(
-        `<polyline points="${d}" class="diagram-train-line${isHighlighted ? ' diagram-train-line--highlight' : ''}" data-train-id="${train.id}"${typeStyle} />`
-      );
+      const cls = `diagram-train-line${isHighlighted ? ' diagram-train-line--highlight' : ''}${train.timesConfident === false ? ' diagram-train-line--unconfident' : ''}`;
+      svgParts.push(`<polyline points="${d}" class="${cls}" data-train-id="${train.id}"${typeStyle}>${unconfidentTitle}</polyline>`);
     }
 
     const markerColor = resolvedColor || 'var(--color-accent)';

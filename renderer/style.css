@@ -122,6 +122,33 @@ body {
 }
 #oud-import-label { color: var(--color-text-dim); }
 
+/* データの扱いについての明示（ヘッダーの「🔒 ローカル完結」ボタンから
+   開閉、初回起動時は自動表示——renderer/app.mjsのtline-privacy-notice-seen
+   参照）。#oud-import-panelと同じ非モーダルの帯パターン（.app-toastの
+   コメント参照: ネイティブモーダルはWindows環境でのフォーカス不具合と
+   相性が悪いため避ける方針）。 */
+.privacy-panel {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 8px 20px;
+  background: var(--color-panel);
+  border-bottom: 1px solid var(--color-border);
+  font-size: 12px;
+  color: var(--color-text-dim);
+}
+.privacy-panel p { margin: 0; line-height: 1.6; }
+.privacy-panel button {
+  background: transparent;
+  border: 1px solid var(--color-border);
+  color: var(--color-text);
+  padding: 5px 10px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
 /* 通知トースト（2026-07-15、window.alert()の置き換え）。ネイティブalert()は
    Electron上でモーダルダイアログとしてOS側に出るため、非表示ウィンドウ検証
    （main.jsのTLINE_TEST_HIDDEN_WINDOW）と相性が悪いのに加え、Windows環境で
@@ -258,6 +285,9 @@ main { padding: 20px; }
   stroke-width: 2;
 }
 .diagram-train-line--highlight { stroke: var(--color-warn); stroke-width: 3; }
+/* timesConfident:false（時刻解読の自信度が低い列車、renderer/diagramView.mjs
+   参照）を、運用つなぎのunverified表示と同じ「薄く表示」で示す。 */
+.diagram-train-line--unconfident { opacity: 0.5; }
 .diagram-train-line--adjusted {
   stroke: var(--color-warn);
   stroke-width: 2;
@@ -353,6 +383,7 @@ main { padding: 20px; }
   background: var(--color-panel); /* スティッキー列/行の下を他のセルが通り抜けて見えないよう、既定で不透明にしておく */
 }
 .stop-table th { color: var(--color-text-dim); font-weight: 500; }
+.stop-table-unconfident-mark { color: var(--color-warn); margin-right: 3px; cursor: help; }
 /* ヘッダー行（列車番号等）を上端に固定。左上角（「駅」/「列車」セル）は
    ヘッダー行・駅名列どちらの固定にも属するため、両方より前面に来るよう
    z-indexを一段高くする。 */
