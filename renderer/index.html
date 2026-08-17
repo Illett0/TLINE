@@ -21,6 +21,7 @@
         <option value="light">☀️ ライト</option>
         <option value="classic">📐 クラシック（OuDia風）</option>
       </select>
+      <button id="btn-privacy-info" type="button" title="データの扱いについて">🔒 ローカル完結</button>
       <span id="current-file-label">（サンプルデータ）</span>
       <button id="btn-file-open" type="button">開く</button>
       <button id="btn-file-save" type="button" disabled>保存</button>
@@ -39,6 +40,14 @@
     </label>
     <button id="oud-dia-confirm" type="button">取り込む</button>
     <button id="oud-dia-cancel" type="button">キャンセル</button>
+  </div>
+
+  <div id="privacy-panel" class="privacy-panel hidden" role="status">
+    <p>
+      TLINEはローカルで完結して動作します。開いたダイヤファイル（.oud/.oud2/.tline）や入力した実績データが、
+      インターネット上のどこかに送信されることはありません（このアプリ自体、通信機能を持っていません）。
+    </p>
+    <button id="privacy-panel-close" type="button">閉じる</button>
   </div>
 
   <div id="app-toast" class="app-toast hidden" role="status">

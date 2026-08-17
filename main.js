@@ -8,6 +8,20 @@ const oudParser = require('./lib/oudParser');
 
 let mainWindow;
 
+// .oud2はテキスト形式なので、複雑なダイヤでも通常は数百KB程度に収まる
+// （高根鉄道TM.oud2で数百KB台）。壊れたファイルや誤って選んだ無関係の
+// 巨大ファイルを読み込んでUIが固まる事故を防ぐための上限チェック。
+const MAX_DIAGRAM_FILE_BYTES = 20 * 1024 * 1024; // 20MB
+
+function assertReadableFileSize(filePath) {
+  const { size } = fs.statSync(filePath);
+  if (size > MAX_DIAGRAM_FILE_BYTES) {
+    const mb = (size / (1024 * 1024)).toFixed(1);
+    const limitMb = MAX_DIAGRAM_FILE_BYTES / (1024 * 1024);
+    throw new Error(`ファイルサイズが大きすぎます（${mb}MB、上限${limitMb}MB）。壊れたファイルか、ダイヤファイルではない可能性があります。`);
+  }
+}
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1400,
@@ -77,6 +91,7 @@ ipcMain.handle('diagram:choose-open', async () => {
 });
 
 ipcMain.handle('diagram:open-file', async (event, filePath) => {
+  assertReadableFileSize(filePath);
   const raw = fs.readFileSync(filePath, 'utf-8');
   const diagram = JSON.parse(raw);
   recentFiles.touchRecentFile(app.getPath('userData'), filePath, 'tline');
@@ -122,6 +137,7 @@ ipcMain.handle('diagram:remove-recent-file', async (event, filePath) => {
 // ため前回の選択を暗黙に決め打ちしない）。
 
 ipcMain.handle('oud:list-dias', async (event, filePath) => {
+  assertReadableFileSize(filePath);
   const raw = fs.readFileSync(filePath, 'utf-8');
   const parsed = oudParser.parseDiagram(raw);
   if (!parsed) throw new Error('OuDia形式のファイルとして認識できませんでした（Rosen.ブロックが見つかりません）。');
@@ -133,6 +149,7 @@ ipcMain.handle('oud:list-dias', async (event, filePath) => {
 });
 
 ipcMain.handle('oud:import', async (event, { filePath, diaIndex }) => {
+  assertReadableFileSize(filePath);
   const raw = fs.readFileSync(filePath, 'utf-8');
   const parsed = oudParser.parseDiagram(raw);
   if (!parsed) throw new Error('OuDia形式のファイルとして認識できませんでした（Rosen.ブロックが見つかりません）。');
