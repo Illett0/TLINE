@@ -96,6 +96,9 @@ const state = {
   // 区間が確定してnullに戻る。既存のプルダウンフォームとは独立せず、
   // 互いの操作がもう一方のセレクトにも反映されるようにしてある。
   dutyPicker: null,
+  // 直近で追加された区間のindex（1.1秒だけ、テーブルの該当行をフラッシュ
+  // 表示するため。addDutySegmentが設定・自動でnullに戻す）。
+  dutyLastAddedSegmentIndex: null,
 };
 
 const el = {
@@ -1132,6 +1135,18 @@ function addDutySegment(train, fromIndex, toIndex) {
     return false;
   }
   state.dutyDraft.segments.push(segment);
+  // 追加された行を一瞬フラッシュ表示する（issue #2、2026-09-23「設定完了を
+  // もっとわかりやすく」）。indexベースなので、フラッシュ中に並べ替え/削除
+  // されると別の行が光ることがあるが、1.1秒で自動的に消える一時効果のため
+  // 実害は小さいと判断し、対策は入れていない。
+  const newIndex = state.dutyDraft.segments.length - 1;
+  state.dutyLastAddedSegmentIndex = newIndex;
+  setTimeout(() => {
+    if (state.dutyLastAddedSegmentIndex === newIndex) {
+      state.dutyLastAddedSegmentIndex = null;
+      renderTabLazy('duty', renderDutyTab);
+    }
+  }, 1100);
   return true;
 }
 
@@ -1218,6 +1233,7 @@ el.dutySegmentTable.addEventListener('click', (e) => {
     const i = Number(editBtn.dataset.editIndex);
     const [removed] = state.dutyDraft.segments.splice(i, 1);
     state.dutyPicker = null;
+    state.dutyLastAddedSegmentIndex = null;
     el.dutySegmentTrain.value = removed.trainId;
     updateDutySegmentFromOptions();
     showToast('区間をフォームに戻しました。乗車駅・降車駅を選び直して「区間を追加」してください。', 'info');
@@ -1246,6 +1262,7 @@ el.dutySaveForm.addEventListener('submit', (e) => {
   else state.duties[existingIndex] = duty;
   state.dutyDraft = { id: null, name: '', segments: [], minConnectionSeconds: null };
   state.dutyPicker = null;
+  state.dutyLastAddedSegmentIndex = null;
   el.dutyName.value = '';
   el.dutyBuffer.value = '';
   showToast(`仕業「${name}」を保存しました。`, 'info');
@@ -1255,6 +1272,7 @@ el.dutySaveForm.addEventListener('submit', (e) => {
 el.dutyNew.addEventListener('click', () => {
   state.dutyDraft = { id: null, name: '', segments: [], minConnectionSeconds: null };
   state.dutyPicker = null;
+  state.dutyLastAddedSegmentIndex = null;
   el.dutyName.value = '';
   el.dutyBuffer.value = '';
   renderTabLazy('duty', renderDutyTab);
@@ -1268,6 +1286,7 @@ el.dutyListTable.addEventListener('click', (e) => {
   if (btn.dataset.action === 'edit') {
     state.dutyDraft = { id: duty.id, name: duty.name, segments: [...duty.segments], minConnectionSeconds: duty.minConnectionSeconds ?? null };
     state.dutyPicker = null;
+    state.dutyLastAddedSegmentIndex = null;
     el.dutyName.value = duty.name;
     el.dutyBuffer.value = duty.minConnectionSeconds ?? '';
   } else if (btn.dataset.action === 'delete') {
@@ -1296,7 +1315,8 @@ function dutySegmentTableHtml() {
       const timeText = range ? `${formatTime(range.start)}〜${formatTime(range.end)}` : '—';
       const upBtn = `<button type="button" data-move-up-index="${i}" ${i === 0 ? 'disabled' : ''} title="上へ">↑</button>`;
       const downBtn = `<button type="button" data-move-down-index="${i}" ${i === last ? 'disabled' : ''} title="下へ">↓</button>`;
-      return `<tr><td>${train ? train.number : s.trainId}</td><td>${stationName(s.fromStationId)} → ${stationName(s.toStationId)}</td><td>${timeText}</td><td>${upBtn}${downBtn} <button type="button" data-edit-index="${i}">編集</button> <button type="button" data-remove-index="${i}">削除</button></td></tr>`;
+      const rowCls = i === state.dutyLastAddedSegmentIndex ? ' class="duty-segment-row--new"' : '';
+      return `<tr${rowCls}><td>${train ? train.number : s.trainId}</td><td>${stationName(s.fromStationId)} → ${stationName(s.toStationId)}</td><td>${timeText}</td><td>${upBtn}${downBtn} <button type="button" data-edit-index="${i}">編集</button> <button type="button" data-remove-index="${i}">削除</button></td></tr>`;
     })
     .join('');
   return `${header}<tbody>${rows}</tbody>`;
@@ -1437,6 +1457,7 @@ function renderDutyTab() {
       highlightTrainIds: new Set(state.dutyDraft.segments.map((s) => s.trainId)),
       highlightTrainId: state.dutyPicker ? state.dutyPicker.trainId : undefined,
       stopPickerTrainId: state.dutyPicker ? state.dutyPicker.trainId : null,
+      stopPickerSelectedIndex: state.dutyPicker ? state.dutyPicker.fromIndex : null,
       candidateTrainIds: new Set(dutySearchCandidates().map((c) => c.trainId)),
       ...diagramDisplayOptions(),
     }

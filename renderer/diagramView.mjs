@@ -97,12 +97,27 @@ function trainStopPoints(train, stations, maxDistanceKm, plotHeight, startHour, 
   return points;
 }
 
-function stopPickerSvg(train, points) {
+// `selectedIndex` — the stop already picked as this train's 乗車駅
+// (state.dutyPicker.fromIndex), if any: drawn larger with a ✓ mark and its
+// own class so it visually reads as "already chosen, pick the next one"
+// rather than just another clickable dot (2026-09-23「乗車駅のハイライトを
+// もっとわかりやすく」)。半径も6→8に広げてクリックしやすくした
+// （「ダイヤグラムのクリックがしづらい」フィードバック、同日）。
+function stopPickerSvg(train, points, selectedIndex) {
   return points
-    .map(
-      (p) =>
-        `<circle cx="${p.x}" cy="${p.y}" r="6" class="diagram-stop-picker" data-train-id="${train.id}" data-stop-index="${p.index}"><title>${p.station.name}をクリックして選択</title></circle>`
-    )
+    .map((p) => {
+      const isSelected = selectedIndex != null && p.index === selectedIndex;
+      const cls = `diagram-stop-picker${isSelected ? ' diagram-stop-picker--selected' : ''}`;
+      const title = isSelected ? `${p.station.name}（乗車駅として選択済み）— 続けて降車駅をクリック` : `${p.station.name}をクリックして選択`;
+      const r = isSelected ? 10 : 8;
+      const mark = isSelected
+        ? `<text x="${p.x}" y="${p.y + 4}" text-anchor="middle" class="diagram-stop-picker-mark" pointer-events="none">✓</text>`
+        : '';
+      return (
+        `<circle cx="${p.x}" cy="${p.y}" r="${r}" class="${cls}" data-train-id="${train.id}" data-stop-index="${p.index}"><title>${title}</title></circle>` +
+        mark
+      );
+    })
     .join('');
 }
 
@@ -549,6 +564,7 @@ export function renderDiagram(
     showTurnbackOperationNumbers = true,
     showTrainNumbers = true,
     stopPickerTrainId = null, // 仕業タブ・運転整理タブ共通のクリックピッカー（issue #2）— trainIdが一致する列車だけ、クリック可能なstopPickerSvgの丸を各stopに描く
+    stopPickerSelectedIndex = null, // 仕業タブのみ: state.dutyPicker.fromIndexが指す、既に選んだ乗車駅のstop index（stopPickerSvgの✓マーク用）
     candidateTrainIds = null, // 仕業タブの「終着駅からの自動サーチ」（issue #2）— このSetに含まれる列車の線を光らせて候補であることを示す（isHighlightedな列車には重ねない）
   } = {}
 ) {
@@ -641,7 +657,19 @@ export function renderDiagram(
     for (const points of segments) {
       const d = points.map((p) => p.join(',')).join(' ');
       const cls = `diagram-train-line${isHighlighted ? ' diagram-train-line--highlight' : ''}${isCandidate ? ' diagram-train-line--candidate' : ''}${train.timesConfident === false ? ' diagram-train-line--unconfident' : ''}`;
-      svgParts.push(`<polyline points="${d}" class="${cls}" data-train-id="${train.id}"${typeStyle}>${unconfidentTitle}</polyline>`);
+      // クリックがしづらいというフィードバック（issue #2、2026-09-23）を
+      // 受け、実際の見た目のstroke-width（2〜4px）とは別に、太い透明な
+      // <polyline>を同じ<g>に重ねて当たり判定だけ広げる（chainLineHitAreaSvg
+      // と同じ手法）。<g>でホバー状態をまとめることで、透明な当たり判定に
+      // カーソルが乗った時点で見える方の線もCSSでハイライトできる
+      // （仕業/運転整理タブのみ——#duty-diagram/#dispatch-diagramにCSSで
+      // スコープ、他タブでは何も起きない）。
+      svgParts.push(
+        `<g class="diagram-train-hit-group" data-train-id="${train.id}">` +
+          `<polyline points="${d}" class="diagram-train-hitarea" data-train-id="${train.id}" />` +
+          `<polyline points="${d}" class="${cls}" data-train-id="${train.id}"${typeStyle}>${unconfidentTitle}</polyline>` +
+          `</g>`
+      );
     }
 
     const markerColor = resolvedColor || 'var(--color-accent)';
@@ -746,7 +774,7 @@ export function renderDiagram(
     // 箇所でも意図しない列車のstopを拾わないようにする）。
     if (stopPickerTrainId && train.id === stopPickerTrainId) {
       const stopPoints = trainStopPoints(train, stations, maxDistanceKm, plotHeight, startHour, hourWidth);
-      svgParts.push(stopPickerSvg(train, stopPoints));
+      svgParts.push(stopPickerSvg(train, stopPoints, stopPickerSelectedIndex));
     }
   }
 
