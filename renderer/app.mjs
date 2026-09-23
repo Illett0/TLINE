@@ -161,7 +161,7 @@ const el = {
   btnPrivacyInfo: document.getElementById('btn-privacy-info'),
   privacyPanel: document.getElementById('privacy-panel'),
   privacyPanelClose: document.getElementById('privacy-panel-close'),
-  dutyPickerStatus: document.getElementById('duty-picker-status'),
+  dutyStepper: document.getElementById('duty-stepper'),
   dutySearchCandidates: document.getElementById('duty-search-candidates'),
   dutySegmentForm: document.getElementById('duty-segment-form'),
   dutySegmentTrain: document.getElementById('duty-segment-train'),
@@ -1390,17 +1390,33 @@ el.dutySearchCandidates.addEventListener('click', (e) => {
 });
 
 // ダイヤグラム上の区間ピッカー（state.dutyPicker、issue #2「ダイヤグラムから
-// 選択」）の進行状況をテキストで示す。丸だけだと「今どちらを選んでいるか」
-// が伝わりにくいための補助表示。
-function dutyPickerStatusHtml() {
-  if (!state.dutyPicker) return 'ヒント: 下のダイヤグラムで列車の線をクリックすると、その列車から区間を選び始められます。';
-  const train = state.diagram.trains.find((t) => t.id === state.dutyPicker.trainId);
-  const trainLabel = train ? train.number : state.dutyPicker.trainId;
-  if (state.dutyPicker.fromIndex == null) {
-    return `列車${trainLabel}を選択中 — ダイヤグラム上でオレンジの丸から乗車駅をクリックしてください。`;
-  }
-  const fromName = stationName(train.stops[state.dutyPicker.fromIndex].stationId);
-  return `列車${trainLabel}／乗車駅: ${fromName} を選択中 — 続けて降車駅（乗車駅より後）をクリックしてください。`;
+// 選択」）の進行状況を、①列車→②乗車駅→③降車駅の縦並びステッパーとして
+// 示す（2026-09-23、「上から下に選択していく感じにしたい」というUI改善
+// 要望）。各行は済み(done)/選択中(active)/これから(pending)のいずれか一つで、
+// 「今どのステップにいるか」が一目で追えるようにする。③は選んだ瞬間に
+// 区間が確定してdutyPickerがnullに戻る（＝値を保持する状態を持たない）ため、
+// 常にヒント文のままで良い。
+function dutyStepperHtml() {
+  const picker = state.dutyPicker;
+  const train = picker ? state.diagram.trains.find((t) => t.id === picker.trainId) : null;
+  // 0=列車待ち、1=乗車駅待ち、2=降車駅待ち（列車・乗車駅は確定済み）
+  const currentStep = !train ? 0 : picker.fromIndex == null ? 1 : 2;
+  const steps = [
+    { label: '① 列車', value: train ? train.number : null, hint: 'ダイヤグラムで列車の線をクリック' },
+    {
+      label: '② 乗車駅',
+      value: train && picker.fromIndex != null ? stationName(train.stops[picker.fromIndex].stationId) : null,
+      hint: 'ダイヤグラムでオレンジの丸から乗車駅をクリック',
+    },
+    { label: '③ 降車駅', value: null, hint: '続けて降車駅（乗車駅より後）をクリック — 区間が確定します' },
+  ];
+  return steps
+    .map((s, i) => {
+      const status = i < currentStep ? 'done' : i === currentStep ? 'active' : 'pending';
+      const body = s.value ? `<span class="duty-step-value">${s.value}</span>` : `<span class="duty-step-hint">${s.hint}</span>`;
+      return `<div class="duty-step duty-step--${status}"><span class="duty-step-label">${s.label}</span>${body}</div>`;
+    })
+    .join('');
 }
 
 // ダイヤグラムは編集中の仕業（dutyDraft）に含まれる列車を丸ごとハイライト
@@ -1412,7 +1428,7 @@ function renderDutyTab() {
   el.dutySegmentTable.innerHTML = dutySegmentTableHtml();
   el.dutyBufferWarnings.innerHTML = dutyBufferWarningsHtml();
   el.dutyListTable.innerHTML = dutyListTableHtml();
-  el.dutyPickerStatus.textContent = dutyPickerStatusHtml();
+  el.dutyStepper.innerHTML = dutyStepperHtml();
   el.dutySearchCandidates.innerHTML = dutySearchCandidatesHtml();
   renderDiagramSynced(
     el.dutyDiagram,

@@ -209,17 +209,51 @@ main { padding: 20px; }
 
 .panel-note { color: var(--color-text-dim); font-size: 12px; margin: 4px 0 16px; }
 
-/* 仕業タブの区間ピッカー（issue #2、renderer/app.mjsのdutyPickerStatusHtml）
-   の進行状況表示。フォーム操作より一段目立たせたいので、panel-noteと違い
-   accent色の左境界線をつける。 */
-.duty-picker-status {
-  font-size: 12px;
-  padding: 6px 10px;
+/* 仕業タブの区間ピッカー（issue #2、renderer/app.mjsのdutyStepperHtml）を
+   ①列車→②乗車駅→③降車駅の縦並びステッパーとして表示する
+   （2026-09-23、「上から下に選択していく感じ」というUI改善要望）。
+   選択中(active)の行だけaccent色で強調し、済み(done)は控えめに、
+   これから(pending)は薄くして「今どこにいるか」を視覚的に一本道にする。 */
+.duty-stepper {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
   margin: 4px 0 12px;
-  border-left: 3px solid var(--color-accent);
-  background: var(--color-panel);
-  border-radius: var(--radius-sm);
 }
+.duty-step {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 7px 10px;
+  border-left: 3px solid var(--color-border);
+  font-size: 13px;
+  background: var(--color-panel);
+}
+.duty-step-label { min-width: 72px; flex-shrink: 0; font-weight: 600; font-size: 12px; color: var(--color-text-dim); }
+.duty-step-value { font-weight: 600; }
+.duty-step-hint { color: var(--color-text-dim); font-style: italic; }
+.duty-step--active { border-left-color: var(--color-accent); }
+.duty-step--active .duty-step-label { color: var(--color-text); }
+.duty-step--done { opacity: 0.75; }
+.duty-step--pending { opacity: 0.5; }
+
+/* 「プルダウンで手動編集」の折りたたみ（issue #2、ダイヤグラムのクリック
+   操作を主役にした分、従来のプルダウンフォームは補助的な位置づけに
+   下げる）。summary自体もボタンらしく見せる。 */
+.duty-manual-form {
+  margin: 4px 0 16px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: 4px 12px;
+}
+.duty-manual-form summary {
+  cursor: pointer;
+  padding: 6px 0;
+  font-size: 13px;
+  color: var(--color-text-dim);
+}
+.duty-manual-form[open] summary { color: var(--color-text); }
+.duty-manual-form form { padding: 8px 0 12px; }
 
 /* 運転整理タブの番線競合警告（issue #4、findNewTrackConflicts）。空の場合は
    :emptyでpadding/borderごと消え、DOMに残っても余白が発生しない。 */
@@ -300,11 +334,11 @@ main { padding: 20px; }
 /* 仕業タブの「終着駅からの自動サーチ」候補（issue #2）: 直前の区間の降車駅
    から乗れる列車を、選択中/確定済みの強調（--highlight、amber太線）とは
    別の見た目で軽く示す——種別色はそのまま活かしたいのでstroke自体は変えず
-   drop-shadowの光彩のみ加える（stroke-widthはstroke-dasharray等を持つ
-   種別styleより後のCSSなので優先して効く）。 */
+   drop-shadowの光彩のみ加える。amberは「選択中/確定済み」の意味で既に
+   使っているため、候補は緑系（emerald）にして両者を混同しないようにする。 */
 .diagram-train-line--candidate {
-  stroke-width: 4;
-  filter: drop-shadow(0 0 3px var(--color-warn));
+  stroke-width: 3;
+  filter: drop-shadow(0 0 3px #34d399);
 }
 /* timesConfident:false（時刻解読の自信度が低い列車、renderer/diagramView.mjs
    参照）を、運用つなぎのunverified表示と同じ「薄く表示」で示す。 */
