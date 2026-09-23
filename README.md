@@ -37,7 +37,8 @@ OuDia/OuDiaSecondのUI・機能コンセプトを参考にした、**運転整�
 ```bash
 npm install
 npm run setup   # インストール時のスクリプト実行を許可制にしているため、許可済みのものを実行（初回・依存関係更新時のみでOK）
-npm start
+npm start        # 通常起動
+npm run dev      # 開発用: main.js/preload.js/lib/data/rendererの変更を検知して自動再起動
 ```
 
 ## プロジェクト構成
