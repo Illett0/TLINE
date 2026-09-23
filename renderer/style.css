@@ -297,6 +297,15 @@ main { padding: 20px; }
   stroke-width: 2;
 }
 .diagram-train-line--highlight { stroke: var(--color-warn); stroke-width: 3; }
+/* 仕業タブの「終着駅からの自動サーチ」候補（issue #2）: 直前の区間の降車駅
+   から乗れる列車を、選択中/確定済みの強調（--highlight、amber太線）とは
+   別の見た目で軽く示す——種別色はそのまま活かしたいのでstroke自体は変えず
+   drop-shadowの光彩のみ加える（stroke-widthはstroke-dasharray等を持つ
+   種別styleより後のCSSなので優先して効く）。 */
+.diagram-train-line--candidate {
+  stroke-width: 4;
+  filter: drop-shadow(0 0 3px var(--color-warn));
+}
 /* timesConfident:false（時刻解読の自信度が低い列車、renderer/diagramView.mjs
    参照）を、運用つなぎのunverified表示と同じ「薄く表示」で示す。 */
 .diagram-train-line--unconfident { opacity: 0.5; }
@@ -306,20 +315,23 @@ main { padding: 20px; }
   stroke-dasharray: 5, 4;
 }
 
-/* 仕業タブの区間ピッカー（issue #2、renderer/app.mjsのstate.dutyPicker）:
-   「列車の線→乗車駅→降車駅」の順でクリックして区間を追加できるようにする
-   ため、仕業タブの列車線だけクリック可能であることを示すカーソルにする
-   （計画/運転整理/実績タブの同じクラスには影響しない——#duty-diagramに
-   スコープ）。 */
-#duty-diagram .diagram-train-line { cursor: pointer; }
-.diagram-duty-stop-picker {
+/* クリックピッカー（issue #2）: 仕業タブ（renderer/app.mjsのstate.dutyPicker、
+   「列車の線→乗車駅→降車駅」の3クリック）・運転整理タブ
+   （state.dispatchTrainId、「列車の線→駅」の2クリック）共通。列車線だけ
+   クリック可能であることを示すカーソルにする（計画/実績タブの同じクラスには
+   影響しない——#duty-diagram/#dispatch-diagramにスコープ）。 */
+#duty-diagram .diagram-train-line,
+#dispatch-diagram .diagram-train-line {
+  cursor: pointer;
+}
+.diagram-stop-picker {
   fill: var(--color-warn);
   stroke: var(--color-bg);
   stroke-width: 1.5;
   cursor: pointer;
   opacity: 0.85;
 }
-.diagram-duty-stop-picker:hover { opacity: 1; }
+.diagram-stop-picker:hover { opacity: 1; }
 
 /* fill:noneだと既定のpointer-events:visiblePaintedでは1.5pxの輪郭線しか
    ホバー判定されず、depotWorkツールチップ（<title>、diagramView.mjsの

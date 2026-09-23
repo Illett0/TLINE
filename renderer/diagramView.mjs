@@ -68,13 +68,15 @@ function distanceToY(distanceKm, maxDistanceKm, plotHeight) {
 
 // One diagram point per entry of `train.stops` (addressed by array index —
 // matching how renderer/app.mjs's duty segments reference
-// `train.stops[i].stationId`, see issue #2), for the 仕業タブ's "click the
-// train's line, then click 2 of its own stops" duty-segment picker
-// (renderer/app.mjs's state.dutyPicker). Positioned at the midpoint of the
-// stop's dwell (arrival→departure) when both are recorded, otherwise at
-// whichever single time it has; a stop with neither (shouldn't normally
-// happen — trainPolylineSegments would have nothing to draw for it either)
-// is skipped, leaving nothing to click there.
+// `train.stops[i].stationId`, see issue #2), for the click-to-pick-a-stop UX
+// used by both the 仕業タブ ("click the train's line, then click 2 of its
+// own stops" — renderer/app.mjs's state.dutyPicker) and the 運転整理タブ
+// (click the train's line, then click 1 stop as the shift-from station —
+// state.dispatchTrainId). Positioned at the midpoint of the stop's dwell
+// (arrival→departure) when both are recorded, otherwise at whichever single
+// time it has; a stop with neither (shouldn't normally happen —
+// trainPolylineSegments would have nothing to draw for it either) is
+// skipped, leaving nothing to click there.
 function trainStopPoints(train, stations, maxDistanceKm, plotHeight, startHour, hourWidth) {
   const byId = new Map(stations.map((s) => [s.id, s]));
   const points = [];
@@ -95,11 +97,11 @@ function trainStopPoints(train, stations, maxDistanceKm, plotHeight, startHour, 
   return points;
 }
 
-function dutyStopPickerSvg(train, points) {
+function stopPickerSvg(train, points) {
   return points
     .map(
       (p) =>
-        `<circle cx="${p.x}" cy="${p.y}" r="6" class="diagram-duty-stop-picker" data-train-id="${train.id}" data-stop-index="${p.index}"><title>${p.station.name}をクリックして乗車/降車駅に選択</title></circle>`
+        `<circle cx="${p.x}" cy="${p.y}" r="6" class="diagram-stop-picker" data-train-id="${train.id}" data-stop-index="${p.index}"><title>${p.station.name}をクリックして選択</title></circle>`
     )
     .join('');
 }
@@ -546,7 +548,8 @@ export function renderDiagram(
     showDepotOperationNumbers = true,
     showTurnbackOperationNumbers = true,
     showTrainNumbers = true,
-    dutyStopPickerTrainId = null, // 仕業タブの区間ピッカー（issue #2）— trainIdが一致する列車だけ、クリック可能なdutyStopPickerSvgの丸を各stopに描く
+    stopPickerTrainId = null, // 仕業タブ・運転整理タブ共通のクリックピッカー（issue #2）— trainIdが一致する列車だけ、クリック可能なstopPickerSvgの丸を各stopに描く
+    candidateTrainIds = null, // 仕業タブの「終着駅からの自動サーチ」（issue #2）— このSetに含まれる列車の線を光らせて候補であることを示す（isHighlightedな列車には重ねない）
   } = {}
 ) {
   const allAdjustedTrains = adjustedTrain ? [adjustedTrain, ...(adjustedTrains || [])] : adjustedTrains || [];
@@ -634,9 +637,10 @@ export function renderDiagram(
     // 付かないフィールドで、サンプル/手入力データではundefinedのまま——
     // !train.timesConfidentだとそれらまで「低精度」と誤判定してしまう。
     const unconfidentTitle = train.timesConfident === false ? '<title>時刻の解読精度が低い可能性があります（非単調な時刻列）</title>' : '';
+    const isCandidate = !isHighlighted && candidateTrainIds != null && candidateTrainIds.has(train.id);
     for (const points of segments) {
       const d = points.map((p) => p.join(',')).join(' ');
-      const cls = `diagram-train-line${isHighlighted ? ' diagram-train-line--highlight' : ''}${train.timesConfident === false ? ' diagram-train-line--unconfident' : ''}`;
+      const cls = `diagram-train-line${isHighlighted ? ' diagram-train-line--highlight' : ''}${isCandidate ? ' diagram-train-line--candidate' : ''}${train.timesConfident === false ? ' diagram-train-line--unconfident' : ''}`;
       svgParts.push(`<polyline points="${d}" class="${cls}" data-train-id="${train.id}"${typeStyle}>${unconfidentTitle}</polyline>`);
     }
 
@@ -733,14 +737,16 @@ export function renderDiagram(
       }
     }
 
-    // 仕業タブの区間ピッカー（issue #2、renderer/app.mjsのstate.dutyPicker）:
-    // 「列車の線をクリック→乗車駅→降車駅の順にクリック」で区間を追加できる
-    // ようにするため、選択中の列車1本だけ、自身の各停車にクリック可能な丸を
-    // 重ねる。他の列車には何も描かない（クリック対象を選択中の1本に絞ること
-    // で、線が密集した箇所でも意図しない列車のstopを拾わないようにする）。
-    if (dutyStopPickerTrainId && train.id === dutyStopPickerTrainId) {
+    // 選択中の列車のクリックピッカー（issue #2）: 仕業タブ
+    // （renderer/app.mjsのstate.dutyPicker、「列車の線→乗車駅→降車駅」の
+    // 3クリックで区間を追加）・運転整理タブ（state.dispatchTrainId、
+    // 「列車の線→駅」の2クリックでずらす起点駅を選ぶ）共通の仕組み。選択中の
+    // 列車1本だけ、自身の各停車にクリック可能な丸を重ねる。他の列車には
+    // 何も描かない（クリック対象を選択中の1本に絞ることで、線が密集した
+    // 箇所でも意図しない列車のstopを拾わないようにする）。
+    if (stopPickerTrainId && train.id === stopPickerTrainId) {
       const stopPoints = trainStopPoints(train, stations, maxDistanceKm, plotHeight, startHour, hourWidth);
-      svgParts.push(dutyStopPickerSvg(train, stopPoints));
+      svgParts.push(stopPickerSvg(train, stopPoints));
     }
   }
 

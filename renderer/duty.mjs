@@ -139,6 +139,25 @@ export function findReplacementCandidates(segment, trains, { excludeTrainId, min
   return candidates.sort((a, b) => a.start - b.start);
 }
 
+// 「終着駅からの自動サーチ」（issue #2、2026-09-23、列車運行管理シミュ
+// レーターを参考にした要望）: 仕業タブで区間を積み上げていくとき、直前の
+// 区間の降車駅・降車時刻を起点に、そこから発車する列車を時刻順に返す。
+// findReplacementCandidatesと違い区間の行き先（to）は問わない——次の区間が
+// どこまで行くかはまだ決まっていない段階での「ここから乗れる列車一覧」
+// なので、fromStationId側の一致だけを見る。
+export function findTrainsFromStation(stationId, trains, { afterTime = -Infinity } = {}) {
+  const candidates = [];
+  for (const train of trains) {
+    const stopIndex = train.stops.findIndex((s) => s.stationId === stationId);
+    if (stopIndex === -1) continue;
+    const stop = train.stops[stopIndex];
+    const time = parseTime(stop.departure ?? stop.arrival);
+    if (time == null || time < afterTime) continue;
+    candidates.push({ trainId: train.id, stopIndex, time });
+  }
+  return candidates.sort((a, b) => a.time - b.time);
+}
+
 // 上記3つを束ね、運転整理タブが「この仕業のどの区間を、どの列車に
 // 振り替えられるか」をそのまま表示できる形にする。遅延した列車自身が
 // 使われている区間（複数ありうる）ごとに、前後の区間の時刻に収まる代替

@@ -8,6 +8,7 @@ import {
   findDutyBufferViolations,
   findDutiesWithNewBufferViolations,
   findDutySwapSuggestions,
+  findTrainsFromStation,
 } from './duty.mjs';
 import { parseTime, shiftTime, formatTime } from './timeUtils.mjs';
 
@@ -90,7 +91,7 @@ const state = {
   // ダイヤグラム上での区間ピッカー（issue #2、2026-09-23追加要望「ダイヤ
   // グラムから選択」）。null＝未選択。列車の線をクリックすると
   // { trainId, fromIndex: null } になり、以後その列車のstopの丸だけが
-  // クリック可能になる（renderer/diagramView.mjsのdutyStopPickerTrainId）。
+  // クリック可能になる（renderer/diagramView.mjsのstopPickerTrainId）。
   // 乗車駅を1回クリックするとfromIndexが埋まり、降車駅をクリックした時点で
   // 区間が確定してnullに戻る。既存のプルダウンフォームとは独立せず、
   // 互いの操作がもう一方のセレクトにも反映されるようにしてある。
@@ -161,6 +162,7 @@ const el = {
   privacyPanel: document.getElementById('privacy-panel'),
   privacyPanelClose: document.getElementById('privacy-panel-close'),
   dutyPickerStatus: document.getElementById('duty-picker-status'),
+  dutySearchCandidates: document.getElementById('duty-search-candidates'),
   dutySegmentForm: document.getElementById('duty-segment-form'),
   dutySegmentTrain: document.getElementById('duty-segment-train'),
   dutySegmentFrom: document.getElementById('duty-segment-from'),
@@ -793,7 +795,12 @@ function renderDispatchTab() {
   renderDiagramSynced(
     el.dispatchDiagram,
     { stations: state.diagram.line.stations, trains: state.diagram.trains },
-    { highlightTrainId: train?.id, adjustedTrain: state.adjustedTrain, ...diagramDisplayOptions() }
+    {
+      highlightTrainId: train?.id,
+      adjustedTrain: state.adjustedTrain,
+      stopPickerTrainId: state.dispatchTrainId,
+      ...diagramDisplayOptions(),
+    }
   );
   el.dispatchTable.innerHTML = state.adjustedTrain
     ? stopTableHtml(state.diagram, { trainOverride: state.adjustedTrain, direction: state.timetableDirection })
@@ -823,12 +830,40 @@ el.dispatchConflicts.addEventListener('click', (e) => {
   renderTabLazy('duty', renderDutyTab);
 });
 
-el.dispatchTrain.addEventListener('change', () => {
-  state.dispatchTrainId = el.dispatchTrain.value;
+// プルダウンの選択、ダイヤグラム上での列車線クリック（下記）の両方から
+// 呼ぶ共通処理。列車を切り替えたら調整結果は無意味になるのでリセットする。
+function selectDispatchTrain(trainId) {
+  if (trainId === state.dispatchTrainId) return;
+  state.dispatchTrainId = trainId;
   state.adjustedTrain = null;
+  el.dispatchTrain.value = trainId;
   updateDispatchStationOptions();
   renderDispatchTab();
   renderActualTab(); // adjustedTrainがクリアされたので実績タブの比較基準（issue #7）も更新
+}
+
+el.dispatchTrain.addEventListener('change', () => selectDispatchTrain(el.dispatchTrain.value));
+
+// ダイヤグラム上でのクリック操作（issue #2、2026-09-23、運転整理タブにも
+// 反映してほしいとの要望）: 「列車の線をクリック→ずらす起点駅をクリック」の
+// 2クリックでフォームの2つのセレクトを埋められる。仕業タブのクリック
+// ピッカーと違い、運転整理では常に選択中の1列車（state.dispatchTrainId）の
+// stopだけがクリック可能な丸として描かれる（renderer/diagramView.mjsの
+// stopPickerTrainId）ので、途中状態を管理する専用stateは不要——列車の線を
+// クリックすればその場でselectDispatchTrain、stopをクリックすればその場で
+// 駅を確定する。
+el.dispatchDiagram.addEventListener('click', (e) => {
+  const stopEl = e.target.closest('[data-stop-index]');
+  if (stopEl) {
+    const train = state.diagram.trains.find((t) => t.id === state.dispatchTrainId);
+    const stop = train?.stops[Number(stopEl.dataset.stopIndex)];
+    if (!stop) return;
+    state.dispatchStationId = stop.stationId;
+    el.dispatchStation.value = stop.stationId;
+    return;
+  }
+  const trainEl = e.target.closest('[data-train-id]');
+  if (trainEl) selectDispatchTrain(trainEl.dataset.trainId);
 });
 
 el.dispatchForm.addEventListener('submit', (e) => {
@@ -1110,8 +1145,8 @@ el.dutySegmentForm.addEventListener('submit', (e) => {
 
 // ダイヤグラム上での区間ピッカー（issue #2、2026-09-23）: 「列車の線を
 // クリック→乗車駅→降車駅の順にクリック」で区間を追加できるようにする。
-// 列車の線（data-train-id）とdutyStopPickerTrainId一致時にのみ描かれる
-// 各stopの丸（data-stop-index、renderer/diagramView.mjsのdutyStopPickerSvg）
+// 列車の線（data-train-id）とstopPickerTrainId一致時にのみ描かれる
+// 各stopの丸（data-stop-index、renderer/diagramView.mjsのstopPickerSvg）
 // の両方をこの1つのクリックハンドラで処理する——丸は線の真上に重なって
 // 描かれるので、closestで丸を先にチェックする必要がある。
 function pickDutyTrain(trainId) {
@@ -1301,6 +1336,59 @@ function dutyListTableHtml() {
   return `${header}<tbody>${rows}</tbody>`;
 }
 
+// 「終着駅からの自動サーチ」（issue #2、2026-09-23、列車運行管理シミュ
+// レーターを参考にした要望・マスト機能）: 直前に追加した区間の降車駅・
+// 降車時刻（＋最低乗り継ぎ時間の入力があれば加味）を起点に、duty.mjsの
+// findTrainsFromStationでそこから乗れる列車を時刻順に返す。最初の区間
+// （segments.length===0）には「直前」が存在しないので対象外——フォーム/
+// ダイヤグラムで自由に選ぶ想定のまま。表示は最大12件に絞る（多すぎると
+// ボタンの一覧が実用的でなくなるため）。
+function dutySearchCandidates() {
+  if (state.dutyDraft.segments.length === 0) return [];
+  const last = state.dutyDraft.segments[state.dutyDraft.segments.length - 1];
+  const range = segmentTimeRange(last, state.diagram.trains);
+  if (!range) return [];
+  const buffer = Number(el.dutyBuffer.value) || 0;
+  return findTrainsFromStation(last.toStationId, state.diagram.trains, { afterTime: range.end + buffer })
+    .filter((c) => c.trainId !== last.trainId) // 直前と同じ列車をそのまま続けるのは新しい区間として無意味（延長したいならその区間のtoStationIdを変えるべき）
+    .slice(0, 12);
+}
+
+function dutySearchCandidatesHtml() {
+  if (state.dutyDraft.segments.length === 0) return '';
+  const candidates = dutySearchCandidates();
+  const last = state.dutyDraft.segments[state.dutyDraft.segments.length - 1];
+  if (candidates.length === 0) {
+    return `<p class="panel-note">${stationName(last.toStationId)}から乗り継げる列車が見つかりませんでした。フォームまたはダイヤグラムから自由に選んでください。</p>`;
+  }
+  const trainById = new Map(state.diagram.trains.map((t) => [t.id, t]));
+  const buttons = candidates
+    .map((c) => {
+      const train = trainById.get(c.trainId);
+      return `<button type="button" data-candidate-train-id="${c.trainId}" data-candidate-stop-index="${c.stopIndex}">${train ? train.number : c.trainId}（${formatTime(c.time)}発）</button>`;
+    })
+    .join(' ');
+  return `<p class="panel-note">${stationName(last.toStationId)}から乗り継げる列車の候補（クリックで列車・乗車駅を選択、ダイヤグラムでもオレンジに光ります）: ${buttons}</p>`;
+}
+
+el.dutySearchCandidates.addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-candidate-train-id]');
+  if (!btn) return;
+  const trainId = btn.dataset.candidateTrainId;
+  const stopIndex = Number(btn.dataset.candidateStopIndex);
+  const train = state.diagram.trains.find((t) => t.id === trainId);
+  if (!train) return;
+  // 列車・乗車駅を選んだところまで進めた状態にする——ダイヤグラムの
+  // クリックピッカーと同じstate.dutyPickerを使うことで、続きは
+  // フォームでもダイヤグラム上のクリックでも降車駅を選べるようにする。
+  state.dutyPicker = { trainId, fromIndex: stopIndex };
+  el.dutySegmentTrain.value = trainId;
+  updateDutySegmentFromOptions();
+  el.dutySegmentFrom.value = String(stopIndex);
+  updateDutySegmentToOptions();
+  renderTabLazy('duty', renderDutyTab);
+});
+
 // ダイヤグラム上の区間ピッカー（state.dutyPicker、issue #2「ダイヤグラムから
 // 選択」）の進行状況をテキストで示す。丸だけだと「今どちらを選んでいるか」
 // が伝わりにくいための補助表示。
@@ -1318,20 +1406,22 @@ function dutyPickerStatusHtml() {
 // ダイヤグラムは編集中の仕業（dutyDraft）に含まれる列車を丸ごとハイライト
 // する（区間の一部だけを強調する精密な描画はしていない——列車のどの区間が
 // 対象かはダイヤグラム下の表で確認する想定）。ピッカーで選択中の列車は
-// highlightTrainIdで別途強調し、その列車だけdutyStopPickerTrainIdで
+// highlightTrainIdで別途強調し、その列車だけstopPickerTrainIdで
 // クリック可能な丸を出す（renderer/diagramView.mjs参照）。
 function renderDutyTab() {
   el.dutySegmentTable.innerHTML = dutySegmentTableHtml();
   el.dutyBufferWarnings.innerHTML = dutyBufferWarningsHtml();
   el.dutyListTable.innerHTML = dutyListTableHtml();
   el.dutyPickerStatus.textContent = dutyPickerStatusHtml();
+  el.dutySearchCandidates.innerHTML = dutySearchCandidatesHtml();
   renderDiagramSynced(
     el.dutyDiagram,
     { stations: state.diagram.line.stations, trains: state.diagram.trains },
     {
       highlightTrainIds: new Set(state.dutyDraft.segments.map((s) => s.trainId)),
       highlightTrainId: state.dutyPicker ? state.dutyPicker.trainId : undefined,
-      dutyStopPickerTrainId: state.dutyPicker ? state.dutyPicker.trainId : null,
+      stopPickerTrainId: state.dutyPicker ? state.dutyPicker.trainId : null,
+      candidateTrainIds: new Set(dutySearchCandidates().map((c) => c.trainId)),
       ...diagramDisplayOptions(),
     }
   );
