@@ -87,6 +87,14 @@ const state = {
   // する（運転整理のadjustedTrain・実績のactualByDateと同じ扱い）。
   duties: [],
   dutyDraft: { id: null, name: '', segments: [], minConnectionSeconds: null },
+  // ダイヤグラム上での区間ピッカー（issue #2、2026-09-23追加要望「ダイヤ
+  // グラムから選択」）。null＝未選択。列車の線をクリックすると
+  // { trainId, fromIndex: null } になり、以後その列車のstopの丸だけが
+  // クリック可能になる（renderer/diagramView.mjsのdutyStopPickerTrainId）。
+  // 乗車駅を1回クリックするとfromIndexが埋まり、降車駅をクリックした時点で
+  // 区間が確定してnullに戻る。既存のプルダウンフォームとは独立せず、
+  // 互いの操作がもう一方のセレクトにも反映されるようにしてある。
+  dutyPicker: null,
 };
 
 const el = {
@@ -152,6 +160,7 @@ const el = {
   btnPrivacyInfo: document.getElementById('btn-privacy-info'),
   privacyPanel: document.getElementById('privacy-panel'),
   privacyPanelClose: document.getElementById('privacy-panel-close'),
+  dutyPickerStatus: document.getElementById('duty-picker-status'),
   dutySegmentForm: document.getElementById('duty-segment-form'),
   dutySegmentTrain: document.getElementById('duty-segment-train'),
   dutySegmentFrom: document.getElementById('duty-segment-from'),
@@ -1071,23 +1080,85 @@ function updateDutySegmentToOptions() {
 el.dutySegmentTrain.addEventListener('change', updateDutySegmentFromOptions);
 el.dutySegmentFrom.addEventListener('change', updateDutySegmentToOptions);
 
-el.dutySegmentForm.addEventListener('submit', (e) => {
-  e.preventDefault();
-  const train = state.diagram.trains.find((t) => t.id === el.dutySegmentTrain.value);
-  const fromIndex = Number(el.dutySegmentFrom.value);
-  const toIndex = Number(el.dutySegmentTo.value);
+// プルダウンフォームの送信、ダイヤグラムでの2駅クリック（下記dutyPicker
+// 関連）の両方から呼ぶ共通の検証・追加処理。区間の妥当性チェックと
+// dutyDraft.segmentsへのpushだけを行い、再描画は呼び出し側の責務にする
+// （フォーム送信側は常に描画、ダイヤグラムクリック側は成功時のみ描画したい
+// ため）。
+function addDutySegment(train, fromIndex, toIndex) {
   if (!train || !Number.isInteger(fromIndex) || !Number.isInteger(toIndex) || toIndex <= fromIndex) {
     showToast('降車駅は乗車駅より後の停車を選んでください。', 'error');
-    return;
+    return false;
   }
   const segment = { trainId: train.id, fromStationId: train.stops[fromIndex].stationId, toStationId: train.stops[toIndex].stationId };
   const candidateSegments = [...state.dutyDraft.segments, segment];
   if (findDutyOverlaps(candidateSegments, state.diagram.trains).length > 0) {
     showToast('この区間は既に追加した区間と時刻が重なっています（同じ乗務員が同時に2つの列車には乗れません）。', 'error');
-    return;
+    return false;
   }
   state.dutyDraft.segments.push(segment);
+  return true;
+}
+
+el.dutySegmentForm.addEventListener('submit', (e) => {
+  e.preventDefault();
+  const train = state.diagram.trains.find((t) => t.id === el.dutySegmentTrain.value);
+  const fromIndex = Number(el.dutySegmentFrom.value);
+  const toIndex = Number(el.dutySegmentTo.value);
+  if (addDutySegment(train, fromIndex, toIndex)) renderTabLazy('duty', renderDutyTab);
+});
+
+// ダイヤグラム上での区間ピッカー（issue #2、2026-09-23）: 「列車の線を
+// クリック→乗車駅→降車駅の順にクリック」で区間を追加できるようにする。
+// 列車の線（data-train-id）とdutyStopPickerTrainId一致時にのみ描かれる
+// 各stopの丸（data-stop-index、renderer/diagramView.mjsのdutyStopPickerSvg）
+// の両方をこの1つのクリックハンドラで処理する——丸は線の真上に重なって
+// 描かれるので、closestで丸を先にチェックする必要がある。
+function pickDutyTrain(trainId) {
+  const train = state.diagram.trains.find((t) => t.id === trainId);
+  if (!train) return;
+  state.dutyPicker = { trainId, fromIndex: null };
+  el.dutySegmentTrain.value = trainId;
+  updateDutySegmentFromOptions();
   renderTabLazy('duty', renderDutyTab);
+}
+
+function pickDutyStop(trainId, stopIndex) {
+  // 別の列車のstopをクリック、またはまだ列車が選ばれていない状態から
+  // stopだけクリックされることは通常無い（丸はdutyPicker.trainIdと一致する
+  // 列車にしか描かれない）が、念のため列車選択からやり直す。
+  if (!state.dutyPicker || state.dutyPicker.trainId !== trainId) {
+    pickDutyTrain(trainId);
+    return;
+  }
+  const train = state.diagram.trains.find((t) => t.id === trainId);
+  if (!train) return;
+  if (state.dutyPicker.fromIndex == null || stopIndex <= state.dutyPicker.fromIndex) {
+    // 乗車駅（初回）、または既に選んだ乗車駅と同じか手前を選び直した場合
+    // ——「間違えたので手前の駅からやり直したい」を素直に許容する。
+    state.dutyPicker.fromIndex = stopIndex;
+    el.dutySegmentFrom.value = String(stopIndex);
+    updateDutySegmentToOptions();
+    renderTabLazy('duty', renderDutyTab);
+    return;
+  }
+  // 降車駅（乗車駅より後）— 区間確定。
+  const added = addDutySegment(train, state.dutyPicker.fromIndex, stopIndex);
+  if (added) {
+    showToast('区間を追加しました。続けて他の区間も追加できます。', 'info');
+    state.dutyPicker = null;
+  }
+  renderTabLazy('duty', renderDutyTab);
+}
+
+el.dutyDiagram.addEventListener('click', (e) => {
+  const stopEl = e.target.closest('[data-stop-index]');
+  if (stopEl) {
+    pickDutyStop(stopEl.dataset.trainId, Number(stopEl.dataset.stopIndex));
+    return;
+  }
+  const trainEl = e.target.closest('[data-train-id]');
+  if (trainEl) pickDutyTrain(trainEl.dataset.trainId);
 });
 
 el.dutySegmentTable.addEventListener('click', (e) => {
@@ -1111,6 +1182,7 @@ el.dutySegmentTable.addEventListener('click', (e) => {
     // ↑↓で調整してから編集する想定。
     const i = Number(editBtn.dataset.editIndex);
     const [removed] = state.dutyDraft.segments.splice(i, 1);
+    state.dutyPicker = null;
     el.dutySegmentTrain.value = removed.trainId;
     updateDutySegmentFromOptions();
     showToast('区間をフォームに戻しました。乗車駅・降車駅を選び直して「区間を追加」してください。', 'info');
@@ -1138,6 +1210,7 @@ el.dutySaveForm.addEventListener('submit', (e) => {
   if (existingIndex === -1) state.duties.push(duty);
   else state.duties[existingIndex] = duty;
   state.dutyDraft = { id: null, name: '', segments: [], minConnectionSeconds: null };
+  state.dutyPicker = null;
   el.dutyName.value = '';
   el.dutyBuffer.value = '';
   showToast(`仕業「${name}」を保存しました。`, 'info');
@@ -1146,6 +1219,7 @@ el.dutySaveForm.addEventListener('submit', (e) => {
 
 el.dutyNew.addEventListener('click', () => {
   state.dutyDraft = { id: null, name: '', segments: [], minConnectionSeconds: null };
+  state.dutyPicker = null;
   el.dutyName.value = '';
   el.dutyBuffer.value = '';
   renderTabLazy('duty', renderDutyTab);
@@ -1158,6 +1232,7 @@ el.dutyListTable.addEventListener('click', (e) => {
   if (!duty) return;
   if (btn.dataset.action === 'edit') {
     state.dutyDraft = { id: duty.id, name: duty.name, segments: [...duty.segments], minConnectionSeconds: duty.minConnectionSeconds ?? null };
+    state.dutyPicker = null;
     el.dutyName.value = duty.name;
     el.dutyBuffer.value = duty.minConnectionSeconds ?? '';
   } else if (btn.dataset.action === 'delete') {
@@ -1226,17 +1301,39 @@ function dutyListTableHtml() {
   return `${header}<tbody>${rows}</tbody>`;
 }
 
+// ダイヤグラム上の区間ピッカー（state.dutyPicker、issue #2「ダイヤグラムから
+// 選択」）の進行状況をテキストで示す。丸だけだと「今どちらを選んでいるか」
+// が伝わりにくいための補助表示。
+function dutyPickerStatusHtml() {
+  if (!state.dutyPicker) return 'ヒント: 下のダイヤグラムで列車の線をクリックすると、その列車から区間を選び始められます。';
+  const train = state.diagram.trains.find((t) => t.id === state.dutyPicker.trainId);
+  const trainLabel = train ? train.number : state.dutyPicker.trainId;
+  if (state.dutyPicker.fromIndex == null) {
+    return `列車${trainLabel}を選択中 — ダイヤグラム上でオレンジの丸から乗車駅をクリックしてください。`;
+  }
+  const fromName = stationName(train.stops[state.dutyPicker.fromIndex].stationId);
+  return `列車${trainLabel}／乗車駅: ${fromName} を選択中 — 続けて降車駅（乗車駅より後）をクリックしてください。`;
+}
+
 // ダイヤグラムは編集中の仕業（dutyDraft）に含まれる列車を丸ごとハイライト
 // する（区間の一部だけを強調する精密な描画はしていない——列車のどの区間が
-// 対象かはダイヤグラム下の表で確認する想定）。
+// 対象かはダイヤグラム下の表で確認する想定）。ピッカーで選択中の列車は
+// highlightTrainIdで別途強調し、その列車だけdutyStopPickerTrainIdで
+// クリック可能な丸を出す（renderer/diagramView.mjs参照）。
 function renderDutyTab() {
   el.dutySegmentTable.innerHTML = dutySegmentTableHtml();
   el.dutyBufferWarnings.innerHTML = dutyBufferWarningsHtml();
   el.dutyListTable.innerHTML = dutyListTableHtml();
+  el.dutyPickerStatus.textContent = dutyPickerStatusHtml();
   renderDiagramSynced(
     el.dutyDiagram,
     { stations: state.diagram.line.stations, trains: state.diagram.trains },
-    { highlightTrainIds: new Set(state.dutyDraft.segments.map((s) => s.trainId)), ...diagramDisplayOptions() }
+    {
+      highlightTrainIds: new Set(state.dutyDraft.segments.map((s) => s.trainId)),
+      highlightTrainId: state.dutyPicker ? state.dutyPicker.trainId : undefined,
+      dutyStopPickerTrainId: state.dutyPicker ? state.dutyPicker.trainId : null,
+      ...diagramDisplayOptions(),
+    }
   );
 }
 

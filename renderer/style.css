@@ -209,6 +209,18 @@ main { padding: 20px; }
 
 .panel-note { color: var(--color-text-dim); font-size: 12px; margin: 4px 0 16px; }
 
+/* 仕業タブの区間ピッカー（issue #2、renderer/app.mjsのdutyPickerStatusHtml）
+   の進行状況表示。フォーム操作より一段目立たせたいので、panel-noteと違い
+   accent色の左境界線をつける。 */
+.duty-picker-status {
+  font-size: 12px;
+  padding: 6px 10px;
+  margin: 4px 0 12px;
+  border-left: 3px solid var(--color-accent);
+  background: var(--color-panel);
+  border-radius: var(--radius-sm);
+}
+
 /* 運転整理タブの番線競合警告（issue #4、findNewTrackConflicts）。空の場合は
    :emptyでpadding/borderごと消え、DOMに残っても余白が発生しない。 */
 .dispatch-conflicts-warning {
@@ -293,6 +305,21 @@ main { padding: 20px; }
   stroke-width: 2;
   stroke-dasharray: 5, 4;
 }
+
+/* 仕業タブの区間ピッカー（issue #2、renderer/app.mjsのstate.dutyPicker）:
+   「列車の線→乗車駅→降車駅」の順でクリックして区間を追加できるようにする
+   ため、仕業タブの列車線だけクリック可能であることを示すカーソルにする
+   （計画/運転整理/実績タブの同じクラスには影響しない——#duty-diagramに
+   スコープ）。 */
+#duty-diagram .diagram-train-line { cursor: pointer; }
+.diagram-duty-stop-picker {
+  fill: var(--color-warn);
+  stroke: var(--color-bg);
+  stroke-width: 1.5;
+  cursor: pointer;
+  opacity: 0.85;
+}
+.diagram-duty-stop-picker:hover { opacity: 1; }
 
 /* fill:noneだと既定のpointer-events:visiblePaintedでは1.5pxの輪郭線しか
    ホバー判定されず、depotWorkツールチップ（<title>、diagramView.mjsの

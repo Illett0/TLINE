@@ -66,6 +66,44 @@ function distanceToY(distanceKm, maxDistanceKm, plotHeight) {
   return MARGIN.top + (distanceKm / maxDistanceKm) * plotHeight;
 }
 
+// One diagram point per entry of `train.stops` (addressed by array index —
+// matching how renderer/app.mjs's duty segments reference
+// `train.stops[i].stationId`, see issue #2), for the 仕業タブ's "click the
+// train's line, then click 2 of its own stops" duty-segment picker
+// (renderer/app.mjs's state.dutyPicker). Positioned at the midpoint of the
+// stop's dwell (arrival→departure) when both are recorded, otherwise at
+// whichever single time it has; a stop with neither (shouldn't normally
+// happen — trainPolylineSegments would have nothing to draw for it either)
+// is skipped, leaving nothing to click there.
+function trainStopPoints(train, stations, maxDistanceKm, plotHeight, startHour, hourWidth) {
+  const byId = new Map(stations.map((s) => [s.id, s]));
+  const points = [];
+  train.stops.forEach((stop, index) => {
+    const station = byId.get(stop.stationId);
+    if (!station) return;
+    const arr = stop.arrival != null ? parseTime(stop.arrival) : null;
+    const dep = stop.departure != null ? parseTime(stop.departure) : null;
+    if (arr == null && dep == null) return;
+    const seconds = arr != null && dep != null ? (arr + dep) / 2 : arr != null ? arr : dep;
+    points.push({
+      index,
+      station,
+      x: timeToX(seconds, startHour, hourWidth),
+      y: distanceToY(station.distanceKm, maxDistanceKm, plotHeight),
+    });
+  });
+  return points;
+}
+
+function dutyStopPickerSvg(train, points) {
+  return points
+    .map(
+      (p) =>
+        `<circle cx="${p.x}" cy="${p.y}" r="6" class="diagram-duty-stop-picker" data-train-id="${train.id}" data-stop-index="${p.index}"><title>${p.station.name}をクリックして乗車/降車駅に選択</title></circle>`
+    )
+    .join('');
+}
+
 // OuDiaSecond's own train-type colors are meant for a light diagram
 // background — 普通(local)'s conventional color is plain black, which is
 // invisible against TLINE's dark theme (--color-bg). Blend any color that's
@@ -508,6 +546,7 @@ export function renderDiagram(
     showDepotOperationNumbers = true,
     showTurnbackOperationNumbers = true,
     showTrainNumbers = true,
+    dutyStopPickerTrainId = null, // 仕業タブの区間ピッカー（issue #2）— trainIdが一致する列車だけ、クリック可能なdutyStopPickerSvgの丸を各stopに描く
   } = {}
 ) {
   const allAdjustedTrains = adjustedTrain ? [adjustedTrain, ...(adjustedTrains || [])] : adjustedTrains || [];
@@ -692,6 +731,16 @@ export function renderDiagram(
       if (terminalNumber && !hasOutgoingChain && showDepotOperationNumbers) {
         svgParts.push(operationLabelSvg(lastPoint, terminalNumber, markerColor, 'right'));
       }
+    }
+
+    // 仕業タブの区間ピッカー（issue #2、renderer/app.mjsのstate.dutyPicker）:
+    // 「列車の線をクリック→乗車駅→降車駅の順にクリック」で区間を追加できる
+    // ようにするため、選択中の列車1本だけ、自身の各停車にクリック可能な丸を
+    // 重ねる。他の列車には何も描かない（クリック対象を選択中の1本に絞ること
+    // で、線が密集した箇所でも意図しない列車のstopを拾わないようにする）。
+    if (dutyStopPickerTrainId && train.id === dutyStopPickerTrainId) {
+      const stopPoints = trainStopPoints(train, stations, maxDistanceKm, plotHeight, startHour, hourWidth);
+      svgParts.push(dutyStopPickerSvg(train, stopPoints));
     }
   }
 
