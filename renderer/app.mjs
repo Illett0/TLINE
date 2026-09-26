@@ -178,6 +178,7 @@ const el = {
   dutySaveForm: document.getElementById('duty-save-form'),
   dutyName: document.getElementById('duty-name'),
   dutyBuffer: document.getElementById('duty-buffer'),
+  dutyShowSaved: document.getElementById('duty-show-saved'),
   dutyBufferWarnings: document.getElementById('duty-buffer-warnings'),
   dutyNew: document.getElementById('duty-new'),
   dutyDiagram: document.getElementById('duty-diagram'),
@@ -249,6 +250,9 @@ for (const button of el.tabButtons) {
     for (const b of el.tabButtons) b.classList.toggle('active', b === button);
     for (const panel of el.tabPanels) panel.classList.toggle('active', panel.id === `tab-${button.dataset.tab}`);
     const tabId = button.dataset.tab;
+    try {
+      sessionStorage.setItem('tline-active-tab', tabId); // 再読み込み（npm run devの自動更新等）後も同じタブを開く
+    } catch {}
     if (tabId === 'plan' && dirtyTabs.plan) renderTabLazy('plan', renderPlanTab);
     if (tabId === 'dispatch' && dirtyTabs.dispatch) renderTabLazy('dispatch', renderDispatchTab);
     if (tabId === 'actual' && dirtyTabs.actual) renderTabLazy('actual', renderActualTab);
@@ -1536,6 +1540,16 @@ function dutyStepperHtml() {
 // 対象かはダイヤグラム下の表で確認する想定）。ピッカーで選択中の列車は
 // highlightTrainIdで別途強調し、その列車だけstopPickerTrainIdで
 // クリック可能な丸を出す（renderer/diagramView.mjs参照）。
+// 登録済みの仕業の区間を帯として描くためのデータ。編集中（dutyDraft.idが
+// 一致）の仕業は、編集中の強調表示と二重になるので除外する。
+function savedDutyBands() {
+  return state.duties
+    .filter((d) => d.id !== state.dutyDraft.id)
+    .flatMap((d) => d.segments.map((seg) => ({ ...seg, label: d.name })));
+}
+
+el.dutyShowSaved.addEventListener('change', () => renderTabLazy('duty', renderDutyTab));
+
 function renderDutyTab() {
   el.dutySegmentTable.innerHTML = dutySegmentTableHtml();
   el.dutyBufferWarnings.innerHTML = dutyBufferWarningsHtml();
@@ -1549,6 +1563,7 @@ function renderDutyTab() {
       highlightTrainIds: new Set(state.dutyDraft.segments.map((s) => s.trainId)),
       highlightTrainId: state.dutyPicker ? state.dutyPicker.trainId : undefined,
       focusTrainId: state.dutyPicker ? state.dutyPicker.trainId : null, // 運転整理タブと同じフォーカス表示（空白クリック/Escで選び直し）
+      dutyBands: el.dutyShowSaved.checked ? savedDutyBands() : null,
       stopPickerTrainId: state.dutyPicker ? state.dutyPicker.trainId : null,
       stopPickerSelectedIndex: state.dutyPicker ? state.dutyPicker.fromIndex : null,
       candidateTrainIds: new Set(dutySearchCandidates().map((c) => c.trainId)),
@@ -1839,3 +1854,12 @@ renderActualTab();
 populateDutySegmentTrainSelect();
 renderTabLazy('duty', renderDutyTab);
 refreshRecentFiles();
+
+// ウィンドウの再読み込み（npm run devのrenderer変更時の自動更新）後は、直前に
+// 開いていたタブを開き直す。sessionStorageはウィンドウ単位なので、アプリを
+// 起動し直した場合は通常どおり計画タブから始まる。
+try {
+  const savedTab = sessionStorage.getItem('tline-active-tab');
+  const button = [...el.tabButtons].find((b) => b.dataset.tab === savedTab);
+  if (button && savedTab !== 'plan') button.click();
+} catch {}

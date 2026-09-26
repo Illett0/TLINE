@@ -8,6 +8,8 @@
   --color-accent: #4fa3ff;
   --color-accent-text: #0c0f14;
   --color-warn: #e3a12c;
+  --duty-band-opacity: 0.6; /* 暗い背景では0.45だとくすむ */
+  --color-duty-saved: #b48cff; /* 登録済みの仕業の帯（仕業タブ）— 編集中のamber・候補のemerald・accentの青と被らない紫 */
   --radius-sm: 4px;
   --radius-md: 6px;
   --radius-lg: 8px;
@@ -27,6 +29,8 @@
   --color-border: #c9ccd3;
   --color-accent: #2166c4;
   --color-warn: #b5720a;
+  --color-duty-saved: #7c3aed;
+  --duty-band-opacity: 0.4;
 }
 
 /* クラシックテーマ（issue #8「クラシックモード(oudUIをがっつり参考に)」）。
@@ -44,6 +48,8 @@
   --color-accent: #1a56b0;
   --color-accent-text: #ffffff;
   --color-warn: #c0392b;
+  --color-duty-saved: #7b3fa0;
+  --duty-band-opacity: 0.4;
   --radius-sm: 0;
   --radius-md: 0;
   --radius-lg: 0;
@@ -392,6 +398,14 @@ main { padding: 20px; }
 #dispatch-diagram .diagram-train-hit-group {
   cursor: pointer;
 }
+/* 列車番号・運番ラベルは線の上に重なって描かれるので、クリック操作のある
+   タブではクリックを素通しさせる（ラベルに当たって列車を選べない問題）。 */
+#duty-diagram .diagram-train-number-label,
+#dispatch-diagram .diagram-train-number-label,
+#duty-diagram .diagram-operation-label,
+#dispatch-diagram .diagram-operation-label {
+  pointer-events: none;
+}
 .diagram-train-hitarea {
   fill: none;
   stroke: #000;
@@ -459,6 +473,33 @@ main { padding: 20px; }
 .diagram-svg--focus .diagram-train-hit-group--focused .diagram-train-line {
   stroke-width: 3.5;
 }
+
+/* 登録済みの仕業の帯（renderer/diagramView.mjsのdutyBandsSvg）。列車線の
+   下に敷く太い半透明の帯で、乗車駅〜降車駅の範囲だけを塗る。 */
+.diagram-duty-band {
+  fill: none;
+  stroke: var(--color-duty-saved);
+  stroke-opacity: var(--duty-band-opacity, 0.45);
+  stroke-width: 11;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+.diagram-duty-band-label {
+  fill: var(--color-duty-saved);
+  font-size: 11px;
+  font-weight: 700;
+  paint-order: stroke;
+  stroke: var(--color-bg);
+  stroke-width: 3px;
+  pointer-events: none;
+}
+.duty-color-legend { display: inline-flex; gap: 12px; margin-left: 8px; font-size: 12px; }
+.duty-color-legend-item { display: inline-flex; align-items: center; gap: 4px; }
+.duty-color-swatch { display: inline-block; width: 18px; height: 6px; border-radius: 3px; }
+.duty-color-swatch--draft { background: var(--color-warn); }
+.duty-color-swatch--saved { background: var(--color-duty-saved); opacity: 0.8; }
+.duty-color-swatch--candidate { background: #34d399; }
 
 /* 運転整理タブのピッカー（renderer/diagramView.mjsのdispatchPickerSvg）:
    走行区間＝帯（ホバーで薄く、選択中は濃くaccent色で塗る）、停車＝発時刻の

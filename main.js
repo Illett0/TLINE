@@ -22,10 +22,43 @@ function assertReadableFileSize(filePath) {
   }
 }
 
+// `npm run dev`（scripts/dev.js）専用: フル再起動をまたいでウィンドウの
+// 位置・サイズを引き継ぎ、再起動後はフォーカスを奪わずに表示する。
+function readDevBounds() {
+  const file = process.env.TLINE_DEV_BOUNDS_FILE;
+  if (!file || !process.env.TLINE_DEV_RESTART) return null;
+  try {
+    const b = JSON.parse(fs.readFileSync(file, 'utf-8'));
+    return ['x', 'y', 'width', 'height'].every((k) => Number.isFinite(b[k])) ? b : null;
+  } catch {
+    return null;
+  }
+}
+
+function setupDevWindow(win) {
+  const file = process.env.TLINE_DEV_BOUNDS_FILE;
+  const saveBounds = () => {
+    if (win.isDestroyed() || win.isMinimized()) return;
+    try {
+      fs.writeFileSync(file, JSON.stringify(win.getNormalBounds()));
+    } catch {}
+  };
+  win.on('moved', saveBounds);
+  win.on('resized', saveBounds);
+  saveBounds();
+  // renderer/・data/の変更はウィンドウを作り直さず中身だけ再読み込みする。
+  process.on('message', (msg) => {
+    if (msg === 'reload' && !win.isDestroyed()) win.webContents.reloadIgnoringCache();
+  });
+}
+
 function createWindow() {
+  const devBounds = readDevBounds();
+  const showInactive = Boolean(devBounds) && !process.env.TLINE_TEST_HIDDEN_WINDOW;
   mainWindow = new BrowserWindow({
     width: 1400,
     height: 900,
+    ...(devBounds || {}),
     // scripts/screenshot.js sets this when driving the app via Playwright to
     // eyeball a change (see run/verify skill) — without it, launching that
     // script pops a real 1400x900 window on top of whatever the user is
@@ -35,7 +68,7 @@ function createWindow() {
     // directly, not a screen capture, so hidden windows screenshot exactly
     // as before. Only gated behind this env var so the real app (`npm
     // start`) is unaffected.
-    show: !process.env.TLINE_TEST_HIDDEN_WINDOW,
+    show: !process.env.TLINE_TEST_HIDDEN_WINDOW && !showInactive,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -43,6 +76,9 @@ function createWindow() {
       sandbox: true,
     },
   });
+
+  if (showInactive) mainWindow.once('ready-to-show', () => mainWindow.showInactive());
+  if (process.env.TLINE_DEV && process.env.TLINE_DEV_BOUNDS_FILE) setupDevWindow(mainWindow);
 
   mainWindow.loadFile(path.join(__dirname, 'renderer', 'index.html'));
 }

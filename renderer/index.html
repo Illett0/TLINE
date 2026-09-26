@@ -185,6 +185,12 @@
           <button type="button" id="duty-zoom-in" title="縦方向（駅間隔）を拡大">＋</button>
         </span>
         <span class="diagram-zoom-hint">横方向はダイヤグラム上でマウスホイール／右ドラッグでパン（ズーム率はタブ間で共通です）</span>
+        <label><input id="duty-show-saved" type="checkbox" checked /> 登録済みの仕業</label>
+        <span class="duty-color-legend">
+          <span class="duty-color-legend-item"><span class="duty-color-swatch duty-color-swatch--draft"></span>編集中</span>
+          <span class="duty-color-legend-item"><span class="duty-color-swatch duty-color-swatch--saved"></span>登録済み</span>
+          <span class="duty-color-legend-item"><span class="duty-color-swatch duty-color-swatch--candidate"></span>乗り継ぎ候補</span>
+        </span>
       </div>
       <div class="diagram-wrapper">
         <div id="duty-diagram" class="diagram-container"></div>

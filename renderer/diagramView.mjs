@@ -181,6 +181,50 @@ function dispatchPickerSvg(train, stations, selected, maxDistanceKm, plotHeight,
   return `<g class="diagram-focus-keep diagram-dispatch-picker">${runs.join('')}${handles.join('')}</g>`;
 }
 
+// 登録済みの仕業（仕業タブ、2026-09-26「確定済みの仕業も別の色でしっかり
+// ハイライトしたい」）: 各区間を、乗車駅〜降車駅の範囲だけ列車線の下に太い
+// 帯で描き、区間の始点に仕業名を添える。列車全体ではなく実際に乗務する範囲
+// だけを塗るので、1本の列車を複数の仕業で分担している場合も区別できる。
+// `bands` — [{ trainId, fromStationId, toStationId, label }]
+function dutyBandsSvg(bands, trainById, stations, focusTrainId, maxDistanceKm, plotHeight, startHour, hourWidth) {
+  const byId = new Map(stations.map((s) => [s.id, s]));
+  const parts = [];
+  for (const band of bands) {
+    const train = trainById.get(band.trainId);
+    if (!train) continue;
+    const from = train.stops.findIndex((s) => s.stationId === band.fromStationId);
+    const to = train.stops.findIndex((s, i) => i > from && s.stationId === band.toStationId);
+    if (from === -1 || to === -1) continue;
+    const points = [];
+    for (let i = from; i <= to; i++) {
+      const stop = train.stops[i];
+      const station = byId.get(stop.stationId);
+      if (!station) continue;
+      const y = distanceToY(station.distanceKm, maxDistanceKm, plotHeight);
+      // 乗車駅は発時刻から、降車駅は着時刻までを帯にする（乗車前・降車後の停車は含めない）。
+      const times = i === from ? [stop.departure ?? stop.arrival] : i === to ? [stop.arrival ?? stop.departure] : [stop.arrival, stop.departure];
+      for (const t of times) {
+        const sec = parseTime(t);
+        if (sec != null) points.push([timeToX(sec, startHour, hourWidth), y]);
+      }
+    }
+    if (points.length < 2) continue;
+    const keep = band.trainId === focusTrainId ? ' diagram-focus-keep' : '';
+    const d = points.map((p) => p.join(',')).join(' ');
+    parts.push(`<polyline points="${d}" class="diagram-duty-band${keep}" />`);
+    if (band.label) {
+      // 帯の最後の駅間の中点の右脇に置く——始点に置くと路線の端の駅では図の
+      // 外にはみ出して切れ、最初の駅間だと列車番号ラベル（trainNumberLabelSvg
+      // が最初の傾いた区間に置く）と重なりやすいため。
+      const [a, c] = [points[points.length - 2], points[points.length - 1]];
+      const x = (a[0] + c[0]) / 2 + 9;
+      const y = (a[1] + c[1]) / 2 + 4;
+      parts.push(`<text x="${x}" y="${y}" class="diagram-duty-band-label${keep}">${band.label}</text>`);
+    }
+  }
+  return parts.join('');
+}
+
 // OuDiaSecond's own train-type colors are meant for a light diagram
 // background — 普通(local)'s conventional color is plain black, which is
 // invisible against TLINE's dark theme (--color-bg). Blend any color that's
@@ -626,6 +670,7 @@ export function renderDiagram(
     stopPickerTrainId = null, // 仕業タブ・運転整理タブ共通のクリックピッカー（issue #2）— trainIdが一致する列車だけ、クリック可能なstopPickerSvgの丸を各stopに描く
     stopPickerSelectedIndex = null, // 仕業タブのみ: state.dutyPicker.fromIndexが指す、既に選んだ乗車駅のstop index（stopPickerSvgの✓マーク用）
     focusTrainId = null, // フォーカス表示（2026-09-26）— 設定すると、この列車以外を薄く表示しクリックも受け付けない（上下の列車と時刻が重なる箇所で判定を横取りされないように）
+    dutyBands = null, // 仕業タブ: 登録済みの仕業の区間 [{ trainId, fromStationId, toStationId, label }] — dutyBandsSvg参照
     dispatchPicker = null, // 運転整理タブ: { trainId, index, edge } — dispatchPickerSvg参照
     candidateTrainIds = null, // 仕業タブの「終着駅からの自動サーチ」（issue #2）— このSetに含まれる列車の線を光らせて候補であることを示す（isHighlightedな列車には重ねない）
   } = {}
@@ -689,6 +734,12 @@ export function renderDiagram(
   // order, and each end's own color — see operationChainLineSvg) can look
   // them up after every train has been drawn once.
   const endpointsByTrainId = new Map();
+
+  // 列車線より先に描き、線の下に帯が敷かれる形にする。
+  if (dutyBands && dutyBands.length) {
+    const trainById = new Map(trains.map((t) => [t.id, t]));
+    svgParts.push(dutyBandsSvg(dutyBands, trainById, stations, focusTrainId, maxDistanceKm, plotHeight, startHour, hourWidth));
+  }
 
   for (const train of trains) {
     const segments = trainPolylineSegments(train, stations, maxDistanceKm, plotHeight, startHour, hourWidth);
