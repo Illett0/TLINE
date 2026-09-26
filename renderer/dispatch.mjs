@@ -2,24 +2,45 @@
 // PathBrowser's aggregate.mjs. v1 rule (see NOTES.md "運転整理のロジック"):
 // shifting a train by N seconds at a given station delays (or advances)
 // every stop from that station onward by the same amount; stops before it
-// are untouched.
+// are untouched. Whether the shift starts at that station's arrival or its
+// departure is chosen by applyDelay's `edge` (see below).
 
 import { parseTime, shiftTime } from './timeUtils.mjs';
 
 // `train` — { id, number, direction, stops: [{stationId, arrival, departure}] }.
 // `fromStationId` — apply the shift starting at this stop (inclusive).
 // `deltaSeconds` — positive = delay, negative = advance (run early).
+// `edge` — which of that stop's two times the shift starts from
+// (2026-09-26, issue #2 follow-up: a delay shows up on the diagram in two
+// distinct shapes, and the user wanted both pickable):
+//   'arrival'   (default, the original v1 behavior) — the stop's arrival
+//               and everything after it moves: 走行中の遅れ, i.e. the slope
+//               of the segment *into* this station changes.
+//   'departure' — the arrival stays, only the departure (and everything
+//               after it) moves: 停車時間の延長, i.e. the flat dwell bar at
+//               this station gets longer. At the origin (nothing before it
+//               to keep fixed) this is the same as 'arrival'. An advance
+//               can't shorten the dwell below zero, so a negative delta is
+//               clamped to what the dwell actually has.
 // Returns a new train object; does not mutate the input.
-export function applyDelay(train, fromStationId, deltaSeconds) {
+export function applyDelay(train, fromStationId, deltaSeconds, edge = 'arrival') {
   const fromIndex = train.stops.findIndex((s) => s.stationId === fromStationId);
   if (fromIndex === -1) return train;
+  const keepArrival = edge === 'departure' && fromIndex > 0;
+
+  let delta = deltaSeconds;
+  if (keepArrival && delta < 0) {
+    const arr = parseTime(train.stops[fromIndex].arrival);
+    const dep = parseTime(train.stops[fromIndex].departure);
+    if (arr != null && dep != null) delta = Math.max(delta, arr - dep);
+  }
 
   const stops = train.stops.map((stop, i) => {
     if (i < fromIndex) return stop;
     return {
       ...stop,
-      arrival: shiftTime(stop.arrival, deltaSeconds),
-      departure: shiftTime(stop.departure, deltaSeconds),
+      arrival: i === fromIndex && keepArrival ? stop.arrival : shiftTime(stop.arrival, delta),
+      departure: shiftTime(stop.departure, delta),
     };
   });
 

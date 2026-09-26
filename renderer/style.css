@@ -257,6 +257,25 @@ main { padding: 20px; }
 
 /* 運転整理タブの番線競合警告（issue #4、findNewTrackConflicts）。空の場合は
    :emptyでpadding/borderごと消え、DOMに残っても余白が発生しない。 */
+/* 運転整理タブの「今どこをどうずらしているか」の1行表示（renderer/app.mjsのdispatchTargetHtml） */
+.dispatch-target {
+  margin: 8px 0;
+  padding: 6px 10px;
+  border-left: 3px solid var(--color-accent);
+  font-size: 13px;
+  line-height: 1.6;
+}
+.dispatch-target-applied,
+.dispatch-target-pending {
+  margin-left: 6px;
+  padding: 0 6px;
+  border-radius: 3px;
+  font-size: 11px;
+}
+.dispatch-target-applied { background: var(--color-warn); color: var(--color-bg); }
+.dispatch-target-pending { border: 1px solid currentColor; opacity: 0.7; }
+.dispatch-target-hint { font-size: 12px; opacity: 0.7; }
+
 .dispatch-conflicts-warning {
   border: 1px solid var(--color-warn);
   border-radius: 4px;
@@ -414,6 +433,67 @@ main { padding: 20px; }
   fill: var(--color-accent-text);
   font-size: 11px;
   font-weight: 700;
+}
+
+/* フォーカス表示（2026-09-26、運転整理・仕業タブ）: 列車を選んだら、その
+   列車（とそのピッカー・調整後オーバーレイ＝.diagram-focus-keep）以外を
+   薄くし、クリック判定も止める。上下の列車と時刻が重なる箇所で、選んだ
+   列車の区間や駅をクリックしたつもりが別の列車に判定を横取りされる問題への
+   対応。解除は空白部分のクリックかEscキー（renderer/app.mjs参照）。
+   グリッド線・駅名・時刻ラベルは位置の手がかりなので薄くしない。 */
+.diagram-svg--focus > :not(.diagram-focus-keep):not(.diagram-grid-line):not(.diagram-grid-line-minor):not(.diagram-station-label):not(.diagram-hour-label) {
+  opacity: 0.18;
+  transition: opacity 0.15s;
+}
+.diagram-svg--focus * {
+  pointer-events: none !important;
+}
+.diagram-svg--focus .diagram-train-hit-group--focused .diagram-train-hitarea,
+.diagram-svg--focus .diagram-dispatch-run {
+  pointer-events: stroke !important;
+}
+.diagram-svg--focus .diagram-stop-picker,
+.diagram-svg--focus .diagram-dispatch-dwell {
+  pointer-events: all !important;
+}
+.diagram-svg--focus .diagram-train-hit-group--focused .diagram-train-line {
+  stroke-width: 3.5;
+}
+
+/* 運転整理タブのピッカー（renderer/diagramView.mjsのdispatchPickerSvg）:
+   走行区間＝帯（ホバーで薄く、選択中は濃くaccent色で塗る）、停車＝発時刻の
+   丸。帯は普段は透明で、選んだ列車の線の見た目を邪魔しない。 */
+.diagram-dispatch-run {
+  stroke: var(--color-accent);
+  stroke-opacity: 0;
+  stroke-width: 14;
+  stroke-linecap: round;
+  cursor: pointer;
+  transition: stroke-opacity 0.1s;
+}
+.diagram-dispatch-run:hover {
+  stroke-opacity: 0.3;
+}
+.diagram-dispatch-run--selected,
+.diagram-dispatch-run--selected:hover {
+  stroke-opacity: 0.5;
+}
+.diagram-dispatch-dwell {
+  fill: var(--color-warn);
+  stroke: var(--color-bg);
+  stroke-width: 1.5;
+  cursor: pointer;
+  opacity: 0.9;
+  transition: opacity 0.1s, filter 0.1s;
+}
+.diagram-dispatch-dwell:hover {
+  opacity: 1;
+  filter: drop-shadow(0 0 3px var(--color-accent));
+}
+.diagram-dispatch-dwell--selected {
+  fill: var(--color-accent);
+  stroke-width: 2;
+  opacity: 1;
 }
 
 /* fill:noneだと既定のpointer-events:visiblePaintedでは1.5pxの輪郭線しか

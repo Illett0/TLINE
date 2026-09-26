@@ -43,6 +43,8 @@ const state = {
   dispatchTrainId: sampleDiagram.trains[0]?.id ?? null,
   dispatchStationId: sampleDiagram.trains[0]?.stops[0]?.stationId ?? null,
   dispatchDelta: 90,
+  dispatchEdge: 'arrival', // 'arrival'（走行で遅れる）| 'departure'（停車が延びる）— renderer/dispatch.mjsのapplyDelay参照
+  dispatchFocus: false, // ダイヤグラムで列車を選んだ後のフォーカス表示中か（空白クリック/Escで解除）
   adjustedTrain: null, // set once 適用 is pressed; cleared by リセット
   // 実績は運転日ごとに独立したマップで持つ（issue #5、2026-07-15）:
   // 日付文字列(YYYY-MM-DD) -> Map(`${trainId}:${stationId}` ->
@@ -111,6 +113,8 @@ const el = {
   dispatchTrain: document.getElementById('dispatch-train'),
   dispatchStation: document.getElementById('dispatch-station'),
   dispatchDelta: document.getElementById('dispatch-delta'),
+  dispatchEdge: document.getElementById('dispatch-edge'),
+  dispatchTarget: document.getElementById('dispatch-target'),
   dispatchReset: document.getElementById('dispatch-reset'),
   dispatchConflicts: document.getElementById('dispatch-conflicts'),
   dispatchDiagram: document.getElementById('dispatch-diagram'),
@@ -700,6 +704,8 @@ el.themeSelect.addEventListener('change', () => {
 function populateDispatchSelectors() {
   el.dispatchTrain.innerHTML = state.diagram.trains.map((t) => `<option value="${t.id}">${t.number}</option>`).join('');
   el.dispatchTrain.value = state.dispatchTrainId;
+  el.dispatchEdge.value = state.dispatchEdge;
+  el.dispatchDelta.value = String(state.dispatchDelta);
   updateDispatchStationOptions();
 }
 
@@ -801,10 +807,15 @@ function renderDispatchTab() {
     {
       highlightTrainId: train?.id,
       adjustedTrain: state.adjustedTrain,
-      stopPickerTrainId: state.dispatchTrainId,
+      focusTrainId: state.dispatchFocus ? train?.id : null,
+      dispatchPicker:
+        state.dispatchFocus && train
+          ? { trainId: train.id, index: train.stops.findIndex((s) => s.stationId === state.dispatchStationId), edge: state.dispatchEdge }
+          : null,
       ...diagramDisplayOptions(),
     }
   );
+  el.dispatchTarget.innerHTML = dispatchTargetHtml(train);
   el.dispatchTable.innerHTML = state.adjustedTrain
     ? stopTableHtml(state.diagram, { trainOverride: state.adjustedTrain, direction: state.timetableDirection })
     : stopTableHtml(state.diagram, { direction: state.timetableDirection });
@@ -833,11 +844,59 @@ el.dispatchConflicts.addEventListener('click', (e) => {
   renderTabLazy('duty', renderDutyTab);
 });
 
+// 今どの列車の、どこを起点に、どうずらしているかを1行で示す（フォーム・
+// ダイヤグラムどちらで選んでも同じ表示になる）。
+function dispatchTargetHtml(train) {
+  if (!train) return '';
+  const index = train.stops.findIndex((s) => s.stationId === state.dispatchStationId);
+  const stationName = (i) => {
+    const st = state.diagram.line.stations.find((x) => x.id === train.stops[i]?.stationId);
+    return st ? st.name : train.stops[i]?.stationId ?? '';
+  };
+  const delta = state.dispatchDelta;
+  const amount = `${delta >= 0 ? '+' : ''}${delta}秒`;
+  let what;
+  if (index <= 0) what = `${stationName(0)}の発車から後ろを${amount}`;
+  else if (state.dispatchEdge === 'departure') what = `${stationName(index)}での停車延長 — ${stationName(index)}発から後ろを${amount}`;
+  else what = `${stationName(index - 1)}→${stationName(index)}間の走行遅れ — ${stationName(index)}着から後ろを${amount}`;
+  const status = state.adjustedTrain ? '<span class="dispatch-target-applied">適用中</span>' : '<span class="dispatch-target-pending">未適用</span>';
+  const focusHint = state.dispatchFocus
+    ? '<span class="dispatch-target-hint">フォーカス中 — 他の列車を選ぶには空白部分をクリックかEsc</span>'
+    : '<span class="dispatch-target-hint">ダイヤグラムで列車の線をクリックするとフォーカスして区間・駅を選べます</span>';
+  return `<strong>${train.number}</strong>: ${what} ${status}<br>${focusHint}`;
+}
+
+// 現在のフォーム状態（列車・起点駅・ずらし方・秒数）で調整後の列車を作り直す。
+// 「適用」ボタン、ダイヤグラム上での区間/駅クリック、適用中のフォーム変更の
+// いずれからも呼ぶ。
+function applyDispatch() {
+  const train = state.diagram.trains.find((t) => t.id === state.dispatchTrainId);
+  if (!train) return;
+  state.dispatchStationId = el.dispatchStation.value;
+  state.dispatchEdge = el.dispatchEdge.value;
+  state.dispatchDelta = Number(el.dispatchDelta.value) || 0;
+  state.adjustedTrain = applyDelay(train, state.dispatchStationId, state.dispatchDelta, state.dispatchEdge);
+  renderDispatchTab();
+  renderActualTab();
+}
+
+function setDispatchFocus(focus) {
+  if (state.dispatchFocus === focus) return;
+  state.dispatchFocus = focus;
+  renderDispatchTab();
+}
+
 // プルダウンの選択、ダイヤグラム上での列車線クリック（下記）の両方から
 // 呼ぶ共通処理。列車を切り替えたら調整結果は無意味になるのでリセットする。
+// 選んだ列車はそのままフォーカス表示にする（上下の列車に判定を取られずに
+// 区間・駅を選べるように）。
 function selectDispatchTrain(trainId) {
-  if (trainId === state.dispatchTrainId) return;
+  if (trainId === state.dispatchTrainId) {
+    setDispatchFocus(true);
+    return;
+  }
   state.dispatchTrainId = trainId;
+  state.dispatchFocus = true;
   state.adjustedTrain = null;
   el.dispatchTrain.value = trainId;
   updateDispatchStationOptions();
@@ -847,38 +906,53 @@ function selectDispatchTrain(trainId) {
 
 el.dispatchTrain.addEventListener('change', () => selectDispatchTrain(el.dispatchTrain.value));
 
-// ダイヤグラム上でのクリック操作（issue #2、2026-09-23、運転整理タブにも
-// 反映してほしいとの要望）: 「列車の線をクリック→ずらす起点駅をクリック」の
-// 2クリックでフォームの2つのセレクトを埋められる。仕業タブのクリック
-// ピッカーと違い、運転整理では常に選択中の1列車（state.dispatchTrainId）の
-// stopだけがクリック可能な丸として描かれる（renderer/diagramView.mjsの
-// stopPickerTrainId）ので、途中状態を管理する専用stateは不要——列車の線を
-// クリックすればその場でselectDispatchTrain、stopをクリックすればその場で
-// 駅を確定する。
+// ダイヤグラム上でのクリック操作（issue #2）。2026-09-26改訂:
+//   1. 列車の線をクリック → その列車を選んでフォーカス表示（他列車は薄く、
+//      クリック不可）。
+//   2. フォーカス中の列車の「駅間の線」→ その区間の走行遅れ（次駅の着時刻
+//      から後ろ）、「駅の丸」→ その駅の停車延長（発時刻から後ろ）として、
+//      入力済みの秒数でその場で適用する（renderer/diagramView.mjsの
+//      dispatchPickerSvg、renderer/dispatch.mjsのapplyDelayのedge参照）。
+//   3. 空白部分のクリック（またはEsc）でフォーカス解除。
 el.dispatchDiagram.addEventListener('click', (e) => {
-  const stopEl = e.target.closest('[data-stop-index]');
-  if (stopEl) {
+  if (!e.target.closest('svg')) return; // 凡例などダイヤグラム外
+  const pickEl = e.target.closest('[data-dispatch-edge]');
+  if (pickEl) {
     const train = state.diagram.trains.find((t) => t.id === state.dispatchTrainId);
-    const stop = train?.stops[Number(stopEl.dataset.stopIndex)];
+    const stop = train?.stops[Number(pickEl.dataset.stopIndex)];
     if (!stop) return;
-    state.dispatchStationId = stop.stationId;
     el.dispatchStation.value = stop.stationId;
+    el.dispatchEdge.value = pickEl.dataset.dispatchEdge;
+    applyDispatch();
     return;
   }
   const trainEl = e.target.closest('[data-train-id]');
-  if (trainEl) selectDispatchTrain(trainEl.dataset.trainId);
+  if (trainEl) {
+    selectDispatchTrain(trainEl.dataset.trainId);
+    return;
+  }
+  setDispatchFocus(false);
 });
 
 el.dispatchForm.addEventListener('submit', (e) => {
   e.preventDefault();
-  const train = state.diagram.trains.find((t) => t.id === state.dispatchTrainId);
-  if (!train) return;
-  state.dispatchStationId = el.dispatchStation.value;
-  state.dispatchDelta = Number(el.dispatchDelta.value) || 0;
-  state.adjustedTrain = applyDelay(train, state.dispatchStationId, state.dispatchDelta);
-  renderDispatchTab();
-  renderActualTab();
+  applyDispatch();
 });
+
+// 適用中は、起点駅・ずらし方・秒数を変えたらすぐ反映する（未適用のうちは
+// 状態表示だけ更新し、「適用」を押すまでダイヤは変えない）。
+for (const input of [el.dispatchStation, el.dispatchEdge, el.dispatchDelta]) {
+  input.addEventListener(input === el.dispatchDelta ? 'input' : 'change', () => {
+    if (state.adjustedTrain) {
+      applyDispatch();
+      return;
+    }
+    state.dispatchStationId = el.dispatchStation.value;
+    state.dispatchEdge = el.dispatchEdge.value;
+    state.dispatchDelta = Number(el.dispatchDelta.value) || 0;
+    renderDispatchTab();
+  });
+}
 
 el.dispatchReset.addEventListener('click', () => {
   state.adjustedTrain = null;
@@ -1208,7 +1282,25 @@ el.dutyDiagram.addEventListener('click', (e) => {
     return;
   }
   const trainEl = e.target.closest('[data-train-id]');
-  if (trainEl) pickDutyTrain(trainEl.dataset.trainId);
+  if (trainEl) {
+    pickDutyTrain(trainEl.dataset.trainId);
+    return;
+  }
+  // 空白部分のクリックでフォーカス（列車の選択）を解除する。
+  if (e.target.closest('svg')) cancelDutyPicker();
+});
+
+function cancelDutyPicker() {
+  if (!state.dutyPicker) return;
+  state.dutyPicker = null;
+  renderTabLazy('duty', renderDutyTab);
+}
+
+// Escキーでフォーカス解除（運転整理タブ・仕業タブのうち表示中の方）。
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape') return;
+  if (document.getElementById('tab-dispatch').classList.contains('active')) setDispatchFocus(false);
+  else if (document.getElementById('tab-duty').classList.contains('active')) cancelDutyPicker();
 });
 
 el.dutySegmentTable.addEventListener('click', (e) => {
@@ -1456,6 +1548,7 @@ function renderDutyTab() {
     {
       highlightTrainIds: new Set(state.dutyDraft.segments.map((s) => s.trainId)),
       highlightTrainId: state.dutyPicker ? state.dutyPicker.trainId : undefined,
+      focusTrainId: state.dutyPicker ? state.dutyPicker.trainId : null, // 運転整理タブと同じフォーカス表示（空白クリック/Escで選び直し）
       stopPickerTrainId: state.dutyPicker ? state.dutyPicker.trainId : null,
       stopPickerSelectedIndex: state.dutyPicker ? state.dutyPicker.fromIndex : null,
       candidateTrainIds: new Set(dutySearchCandidates().map((c) => c.trainId)),
@@ -1513,6 +1606,8 @@ function loadDiagram(diagram, filePath, description) {
   state.currentFileDescription = filePath ? null : description || null;
   state.dispatchTrainId = diagram.trains[0]?.id ?? null;
   state.dispatchStationId = diagram.trains[0]?.stops?.[0]?.stationId ?? null;
+  state.dispatchEdge = 'arrival';
+  state.dispatchFocus = false;
   state.adjustedTrain = null;
   state.actualByDate = new Map();
   state.actualDate = todayDateString();
@@ -1547,7 +1642,7 @@ function loadDiagram(diagram, filePath, description) {
 function buildSavePayload() {
   const payload = { line: state.diagram.line, trains: state.diagram.trains };
   if (state.adjustedTrain) {
-    payload.dispatch = { trainId: state.dispatchTrainId, fromStationId: state.dispatchStationId, deltaSeconds: state.dispatchDelta };
+    payload.dispatch = { trainId: state.dispatchTrainId, fromStationId: state.dispatchStationId, deltaSeconds: state.dispatchDelta, edge: state.dispatchEdge };
   }
   const actualByDate = {};
   for (const [date, map] of state.actualByDate) {
@@ -1569,7 +1664,8 @@ function restoreOpsExtras(loaded) {
       state.dispatchTrainId = loaded.dispatch.trainId;
       state.dispatchStationId = loaded.dispatch.fromStationId;
       state.dispatchDelta = loaded.dispatch.deltaSeconds;
-      state.adjustedTrain = applyDelay(train, loaded.dispatch.fromStationId, loaded.dispatch.deltaSeconds);
+      state.dispatchEdge = loaded.dispatch.edge === 'departure' ? 'departure' : 'arrival'; // edgeの無い旧ファイルは従来通り着時刻から
+      state.adjustedTrain = applyDelay(train, loaded.dispatch.fromStationId, loaded.dispatch.deltaSeconds, state.dispatchEdge);
       populateDispatchSelectors();
       renderTabLazy('dispatch', renderDispatchTab);
     }

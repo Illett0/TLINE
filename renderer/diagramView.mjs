@@ -121,6 +121,66 @@ function stopPickerSvg(train, points, selectedIndex) {
     .join('');
 }
 
+// 運転整理タブのクリックピッカー（2026-09-26、issue #2続報）。遅れは
+// ダイヤグラム上で2通りの形で現れる——駅間の走行で遅れる（その区間の線の
+// 傾きが変わる＝次駅の着時刻から後ろがずれる）か、駅での停車が延びる
+// （横棒が伸びる＝その駅の発時刻から後ろがずれる）か——ので、それぞれを
+// 直接クリックできるようにする:
+//   - 走行区間（前の停車の最後の点→この停車の最初の点）: 太い帯状の当たり
+//     判定。data-dispatch-edge="arrival"（renderer/dispatch.mjsの
+//     applyDelayのedge参照）。
+//   - 各停車の発時刻の点: 丸いハンドル。data-dispatch-edge="departure"。
+//     通過駅（停車が延びようがない）と終着駅（その後ろに何も無い）には
+//     出さない。
+// `selected` — { index, edge } 現在選択中の起点（強調表示する）。
+function dispatchPickerSvg(train, stations, selected, maxDistanceKm, plotHeight, startHour, hourWidth) {
+  const byId = new Map(stations.map((s) => [s.id, s]));
+  const isBranchSeam = (a, b) => a.branchFromStationId === b.id || b.branchFromStationId === a.id;
+  const pts = train.stops.map((stop, index) => {
+    const station = byId.get(stop.stationId);
+    if (!station) return null;
+    const arr = parseTime(stop.arrival);
+    const dep = parseTime(stop.departure);
+    if (arr == null && dep == null) return null;
+    const y = distanceToY(station.distanceKm, maxDistanceKm, plotHeight);
+    return {
+      index,
+      station,
+      stop,
+      y,
+      firstX: timeToX(arr ?? dep, startHour, hourWidth),
+      lastX: timeToX(dep ?? arr, startHour, hourWidth),
+      hasDeparture: dep != null,
+    };
+  });
+  const isSel = (index, edge) => selected != null && selected.index === index && selected.edge === edge;
+  const runs = [];
+  const handles = [];
+  let prev = null;
+  const drawable = pts.filter(Boolean);
+  drawable.forEach((p, k) => {
+    if (prev && !isBranchSeam(prev.station, p.station) && Math.abs(prev.y - p.y) > 0.5) {
+      const cls = `diagram-dispatch-run${isSel(p.index, 'arrival') ? ' diagram-dispatch-run--selected' : ''}`;
+      const title = `${prev.station.name}→${p.station.name}間の走行で遅れる（${p.station.name}着から後ろをずらす）`;
+      runs.push(
+        `<line x1="${prev.lastX}" y1="${prev.y}" x2="${p.firstX}" y2="${p.y}" class="${cls}" data-train-id="${train.id}" data-stop-index="${p.index}" data-dispatch-edge="arrival"><title>${title}</title></line>`
+      );
+    }
+    const isLast = k === drawable.length - 1;
+    if (p.hasDeparture && !isLast && p.stop.stopType !== 'pass') {
+      const selectedHere = isSel(p.index, 'departure');
+      const cls = `diagram-dispatch-dwell${selectedHere ? ' diagram-dispatch-dwell--selected' : ''}`;
+      const title = k === 0 ? `${p.station.name}の発車を遅らせる（${p.station.name}発から後ろをずらす）` : `${p.station.name}での停車を延ばす（${p.station.name}発から後ろをずらす）`;
+      handles.push(
+        `<circle cx="${p.lastX}" cy="${p.y}" r="${selectedHere ? 9 : 7}" class="${cls}" data-train-id="${train.id}" data-stop-index="${p.index}" data-dispatch-edge="departure"><title>${title}</title></circle>`
+      );
+    }
+    prev = p;
+  });
+  // 丸を帯より後に描く（駅の付近では丸のクリックを優先させる）。
+  return `<g class="diagram-focus-keep diagram-dispatch-picker">${runs.join('')}${handles.join('')}</g>`;
+}
+
 // OuDiaSecond's own train-type colors are meant for a light diagram
 // background — 普通(local)'s conventional color is plain black, which is
 // invisible against TLINE's dark theme (--color-bg). Blend any color that's
@@ -565,6 +625,8 @@ export function renderDiagram(
     showTrainNumbers = true,
     stopPickerTrainId = null, // 仕業タブ・運転整理タブ共通のクリックピッカー（issue #2）— trainIdが一致する列車だけ、クリック可能なstopPickerSvgの丸を各stopに描く
     stopPickerSelectedIndex = null, // 仕業タブのみ: state.dutyPicker.fromIndexが指す、既に選んだ乗車駅のstop index（stopPickerSvgの✓マーク用）
+    focusTrainId = null, // フォーカス表示（2026-09-26）— 設定すると、この列車以外を薄く表示しクリックも受け付けない（上下の列車と時刻が重なる箇所で判定を横取りされないように）
+    dispatchPicker = null, // 運転整理タブ: { trainId, index, edge } — dispatchPickerSvg参照
     candidateTrainIds = null, // 仕業タブの「終着駅からの自動サーチ」（issue #2）— このSetに含まれる列車の線を光らせて候補であることを示す（isHighlightedな列車には重ねない）
   } = {}
 ) {
@@ -579,7 +641,7 @@ export function renderDiagram(
   const resolveColor = (hex) => (theme === 'dark' ? ensureVisibleOnDark(hex) : hex);
 
   const svgParts = [];
-  svgParts.push(`<svg viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" class="diagram-svg">`);
+  svgParts.push(`<svg viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" class="diagram-svg${focusTrainId ? ' diagram-svg--focus' : ''}">`);
 
   // Station horizontal gridlines + labels. A station with branchFromStationId
   // set (see lib/oudParser.js's parseDiagram, issue #6) is OuDia's way of
@@ -665,7 +727,7 @@ export function renderDiagram(
       // （仕業/運転整理タブのみ——#duty-diagram/#dispatch-diagramにCSSで
       // スコープ、他タブでは何も起きない）。
       svgParts.push(
-        `<g class="diagram-train-hit-group" data-train-id="${train.id}">` +
+        `<g class="diagram-train-hit-group${train.id === focusTrainId ? ' diagram-train-hit-group--focused diagram-focus-keep' : ''}" data-train-id="${train.id}">` +
           `<polyline points="${d}" class="diagram-train-hitarea" data-train-id="${train.id}" />` +
           `<polyline points="${d}" class="${cls}" data-train-id="${train.id}"${typeStyle}>${unconfidentTitle}</polyline>` +
           `</g>`
@@ -706,7 +768,8 @@ export function renderDiagram(
     });
 
     if (showTrainNumbers && train.number) {
-      svgParts.push(trainNumberLabelSvg(segments, train.number, markerColor));
+      const label = trainNumberLabelSvg(segments, train.number, markerColor);
+      svgParts.push(train.id === focusTrainId ? `<g class="diagram-focus-keep">${label}</g>` : label);
     }
 
     if (train.operation) {
@@ -774,7 +837,10 @@ export function renderDiagram(
     // 箇所でも意図しない列車のstopを拾わないようにする）。
     if (stopPickerTrainId && train.id === stopPickerTrainId) {
       const stopPoints = trainStopPoints(train, stations, maxDistanceKm, plotHeight, startHour, hourWidth);
-      svgParts.push(stopPickerSvg(train, stopPoints, stopPickerSelectedIndex));
+      svgParts.push(`<g class="diagram-focus-keep">${stopPickerSvg(train, stopPoints, stopPickerSelectedIndex)}</g>`);
+    }
+    if (dispatchPicker && train.id === dispatchPicker.trainId) {
+      svgParts.push(dispatchPickerSvg(train, stations, dispatchPicker, maxDistanceKm, plotHeight, startHour, hourWidth));
     }
   }
 
@@ -834,7 +900,7 @@ export function renderDiagram(
     const segments = trainPolylineSegments(at, stations, maxDistanceKm, plotHeight, startHour, hourWidth);
     for (const points of segments) {
       const d = points.map((p) => p.join(',')).join(' ');
-      svgParts.push(`<polyline points="${d}" class="diagram-train-line diagram-train-line--adjusted" data-train-id="${at.id}" />`);
+      svgParts.push(`<polyline points="${d}" class="diagram-train-line diagram-train-line--adjusted diagram-focus-keep" data-train-id="${at.id}" />`);
     }
   }
 

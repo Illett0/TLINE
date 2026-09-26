@@ -86,7 +86,7 @@
 
     <section id="tab-dispatch" class="tab-panel">
       <h2>運転整理</h2>
-      <p class="panel-note">列車を選び、ある駅から先の時刻をまとめてn秒ずらします。この調整によって他列車と同じ番線の時刻が新たに重なった場合、またはこの列車を含む仕業が乗り継ぎ不能になった場合は警告を表示します（調整前から存在する問題は対象外）。下のダイヤグラム上で列車の線→駅の順にクリックしても選べます。</p>
+      <p class="panel-note">列車を選び、ある駅から先の時刻をまとめてn秒ずらします。この調整によって他列車と同じ番線の時刻が新たに重なった場合、またはこの列車を含む仕業が乗り継ぎ不能になった場合は警告を表示します（調整前から存在する問題は対象外）。下のダイヤグラムで列車の線をクリックするとその列車だけが操作対象になり（フォーカス表示）、続けて<strong>駅間の線</strong>をクリックすると「走行で遅れる（着時刻から後ろをずらす）」、<strong>駅の丸</strong>をクリックすると「停車が延びる（発時刻から後ろをずらす）」をその場で適用します。フォーカスの解除は空白部分のクリックかEscキーです。</p>
       <form id="dispatch-form" class="dispatch-form">
         <label>
           列車
@@ -97,12 +97,20 @@
           <select id="dispatch-station"></select>
         </label>
         <label>
+          ずらし方
+          <select id="dispatch-edge">
+            <option value="arrival">走行で遅れる（着時刻から）</option>
+            <option value="departure">停車が延びる（発時刻から）</option>
+          </select>
+        </label>
+        <label>
           ずらす秒数（正=遅らせる／負=早める）
           <input id="dispatch-delta" type="number" step="1" value="90" />
         </label>
         <button type="submit">適用</button>
         <button type="button" id="dispatch-reset">リセット</button>
       </form>
+      <p id="dispatch-target" class="dispatch-target" aria-live="polite"></p>
       <div id="dispatch-conflicts"></div>
       <div class="diagram-zoom-control">
         <span class="diagram-zoom-vertical">
