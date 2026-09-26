@@ -34,6 +34,38 @@ const RELOAD_ONLY_TARGETS = new Set(['data', 'renderer']);
 const BOUNDS_FILE = path.join(require('os').tmpdir(), 'tline-dev-window-bounds.json');
 const DEBOUNCE_MS = 200;
 
+// OneDrive配下では、同期クライアントが内容を変えずにファイルへ触れるだけで
+// fs.watchのイベントが飛び、誰も編集していないのに再起動・再読み込みが起きて
+// いた（2026-09-26、実際のログで確認）。ファイルごとに内容のハッシュを覚えて
+// おき、中身が実際に変わったときだけ反応する。
+const crypto = require('crypto');
+const contentHashes = new Map();
+function hashFile(file) {
+  try {
+    return crypto.createHash('sha1').update(fs.readFileSync(file)).digest('hex');
+  } catch {
+    return null; // 削除・一時的に読めない（保存途中など）— 変更扱いにする
+  }
+}
+function contentChanged(file) {
+  const next = hashFile(file);
+  if (next !== null && contentHashes.get(file) === next) return false;
+  contentHashes.set(file, next);
+  return true;
+}
+function primeHashes(target) {
+  const full = path.join(ROOT, target);
+  if (!fs.existsSync(full)) return;
+  if (fs.statSync(full).isFile()) {
+    contentHashes.set(full, hashFile(full));
+    return;
+  }
+  for (const entry of fs.readdirSync(full, { recursive: true })) {
+    const file = path.join(full, entry);
+    if (fs.statSync(file).isFile()) contentHashes.set(file, hashFile(file));
+  }
+}
+
 let child = null;
 let restartTimer = null;
 let pendingFullRestart = false; // debounce中に1つでもメインプロセス側の変更があればフル再起動
@@ -88,9 +120,14 @@ function scheduleRestart(reason, reloadOnly) {
 for (const target of WATCH_TARGETS) {
   const full = path.join(ROOT, target);
   if (!fs.existsSync(full)) continue;
+  primeHashes(target);
   const isDir = fs.statSync(full).isDirectory();
   fs.watch(full, { recursive: isDir }, (_eventType, filename) => {
-    scheduleRestart(filename ? path.join(target, filename) : target, RELOAD_ONLY_TARGETS.has(target));
+    // ファイル単体の監視（main.js等）ではfilenameがそのファイル自身の名前になる。
+    const changedFile = isDir && filename ? path.join(full, filename) : full;
+    if (fs.existsSync(changedFile) && fs.statSync(changedFile).isDirectory()) return;
+    if (!contentChanged(changedFile)) return;
+    scheduleRestart(isDir ? path.join(target, filename || '') : target, RELOAD_ONLY_TARGETS.has(target));
   });
 }
 
