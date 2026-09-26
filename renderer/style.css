@@ -345,7 +345,9 @@ main { padding: 20px; }
   margin-bottom: 16px;
   cursor: grab; /* 右クリック長押しでパンできることを示す（renderer/app.mjsのsetupDiagramPanZoom） */
 }
-.diagram-container--dragging { cursor: grabbing; }
+.diagram-container { cursor: grab; }
+.diagram-container--dragging,
+.diagram-container--dragging * { cursor: grabbing !important; }
 
 .diagram-svg { display: block; }
 .diagram-grid-line { stroke: var(--color-border); stroke-width: 1; }

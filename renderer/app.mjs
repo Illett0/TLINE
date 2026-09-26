@@ -533,6 +533,8 @@ function setupDiagramPanZoom(container) {
   let dragStartY = 0;
   let dragStartScrollLeft = 0;
   let dragStartScrollTop = 0;
+  let dragMoved = false; // 閾値以上動いたか — 動いた場合は直後のclickを握りつぶす（下記）
+  const DRAG_CLICK_THRESHOLD_PX = 4;
 
   // 右クリックでの独自パン操作を割り当てているため、既定のコンテキスト
   // メニューは常に抑止する。
@@ -549,12 +551,14 @@ function setupDiagramPanZoom(container) {
     dragStartY = e.clientY;
     dragStartScrollLeft = container.scrollLeft;
     dragStartScrollTop = container.scrollTop;
+    dragMoved = false;
     container.classList.add('diagram-container--dragging');
     e.preventDefault();
   });
 
   window.addEventListener('mousemove', (e) => {
     if (!dragging) return;
+    if (Math.abs(e.clientX - dragStartX) > DRAG_CLICK_THRESHOLD_PX || Math.abs(e.clientY - dragStartY) > DRAG_CLICK_THRESHOLD_PX) dragMoved = true;
     container.scrollLeft = dragStartScrollLeft - (e.clientX - dragStartX);
     container.scrollTop = dragStartScrollTop - (e.clientY - dragStartY);
   });
@@ -565,6 +569,21 @@ function setupDiagramPanZoom(container) {
     dragButton = null;
     container.classList.remove('diagram-container--dragging');
   });
+
+  // 左ドラッグでパンした後のmouseupでもclickイベントは発火するので、運転
+  // 整理・仕業タブでは「ドラッグしただけなのに列車が選ばれる／フォーカスが
+  // 外れる」ことになる（2026-09-26）。一定以上動いたドラッグの直後のclickは
+  // キャプチャ段階で止め、各タブのクリック処理まで届かせない。
+  container.addEventListener(
+    'click',
+    (e) => {
+      if (!dragMoved) return;
+      dragMoved = false;
+      e.stopPropagation();
+      e.preventDefault();
+    },
+    true
+  );
 
   // どのタブのダイヤグラムを見ても同じ表示範囲になるよう、スクロール位置
   // もズーム率と同様state共通にする（2026-08-01要望）。上のドラッグ・下の
