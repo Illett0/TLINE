@@ -97,7 +97,7 @@ app.on('window-all-closed', () => {
 
 // ---------- 計画データの保存・読み込み（独自 .tline 形式 + .oud/.oud2） ----------
 //
-// PathBrowserのtimeline:*ハンドラと同じ「メインプロセスがダイアログ/fs、
+// ViUのtimeline:*ハンドラと同じ「メインプロセスがダイアログ/fs、
 // レンダラーはIPC経由のみ」という分担。「開く」ボタンは.tline/.json（自前
 // JSON形式）と.oud/.oud2（OuDia/OuDiaSecond、下記「.oud/.oud2インポート」参照）
 // の両方を1つのダイアログ・1つのボタンから選べる（拡張子でレンダラー側が
@@ -106,7 +106,7 @@ app.on('window-all-closed', () => {
 // (export)は現状スコープ外（NOTES.md参照）— 保存は自前JSON形式のみ。
 
 ipcMain.handle('diagram:choose-open', async () => {
-  // Test-only escape hatch (mirrors PathBrowser's PATHBROWSER_TEST_FILE):
+  // Test-only escape hatch (mirrors ViU's PATHBROWSER_TEST_FILE):
   // native dialogs can't be driven by UI automation (Playwright's Electron
   // driver included — see scripts/screenshot.js), so E2E scripts set this
   // env var to skip the dialog entirely. Works for either file kind — the

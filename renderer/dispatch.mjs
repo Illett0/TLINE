@@ -1,5 +1,5 @@
 // Pure 運転整理 (dispatch adjustment) logic — no DOM access, same spirit as
-// PathBrowser's aggregate.mjs. v1 rule (see NOTES.md "運転整理のロジック"):
+// ViU's aggregate.mjs. v1 rule (see NOTES.md "運転整理のロジック"):
 // shifting a train by N seconds at a given station delays (or advances)
 // every stop from that station onward by the same amount; stops before it
 // are untouched. Whether the shift starts at that station's arrival or its

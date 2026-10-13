@@ -4,7 +4,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 // contextIsolation: true / nodeIntegration: false / sandbox: true on the
 // BrowserWindow, so this is the only bridge the renderer has to Node/Electron
-// — same pattern as PathBrowser's window.pathBrowser.
+// — same pattern as ViU's window.pathBrowser.
 contextBridge.exposeInMainWorld('tline', {
   chooseOpenPath: () => ipcRenderer.invoke('diagram:choose-open'),
   openFile: (filePath) => ipcRenderer.invoke('diagram:open-file', filePath),
