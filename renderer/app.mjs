@@ -1,5 +1,5 @@
 import { sampleDiagram } from '../data/sampleDiagram.mjs';
-import { renderDiagram, MARGIN, ensureVisibleOnDark } from './diagramView.mjs';
+import { renderDiagram, MARGIN, ensureVisibleOnDark, escapeHtml } from './diagramView.mjs';
 import { applyDelay, findNewTrackConflicts } from './dispatch.mjs';
 import {
   segmentTimeRange,
@@ -187,6 +187,13 @@ const el = {
 
 // ---------- 通知トースト（window.alert()の非モーダル代替。style.cssの
 // .app-toastコメント参照） ----------
+
+// IPC経由のエラーはElectronが「Error invoking remote method '…': Error: 」を
+// 前置きするので、利用者向けのトーストではメインプロセス側の本文だけを出す。
+function errorMessage(err) {
+  const message = err && err.message ? err.message : String(err);
+  return message.replace(/^Error invoking remote method '[^']*': (?:\w*Error: )?/, '');
+}
 
 let toastHideTimer = null;
 function showToast(message, kind = 'info') {
@@ -391,7 +398,7 @@ function stopTableHtml(diagram, { trainOverride, direction } = {}) {
         t.timesConfident === false
           ? '<span class="stop-table-unconfident-mark" title="時刻の解読精度が低い可能性があります（非単調な時刻列）">⚠</span>'
           : '';
-      return `<th${color ? ` style="color:${color}"` : ''}>${unconfidentMark}${t.number}</th>`;
+      return `<th${color ? ` style="color:${color}"` : ''}>${unconfidentMark}${escapeHtml(t.number)}</th>`;
     })
     .join('')}</tr></thead>`;
   const rows = stations
@@ -419,7 +426,7 @@ function stopTableHtml(diagram, { trainOverride, direction } = {}) {
       // as a stray duplicate row; matches the "（支線）" annotation
       // renderer/diagramView.mjs adds at the same seam in the diagram.
       const name = station.branchFromStationId != null ? `${station.name}（支線）` : station.name;
-      return `<tr><th>${name}</th>${cells}</tr>`;
+      return `<tr><th>${escapeHtml(name)}</th>${cells}</tr>`;
     })
     .join('');
   return header + `<tbody>${rows}</tbody>`;
@@ -725,7 +732,7 @@ el.themeSelect.addEventListener('change', () => {
 // ---------- 運転整理 ----------
 
 function populateDispatchSelectors() {
-  el.dispatchTrain.innerHTML = state.diagram.trains.map((t) => `<option value="${t.id}">${t.number}</option>`).join('');
+  el.dispatchTrain.innerHTML = state.diagram.trains.map((t) => `<option value="${escapeHtml(t.id)}">${escapeHtml(t.number)}</option>`).join('');
   el.dispatchTrain.value = state.dispatchTrainId;
   el.dispatchEdge.value = state.dispatchEdge;
   el.dispatchDelta.value = String(state.dispatchDelta);
@@ -738,7 +745,7 @@ function updateDispatchStationOptions() {
   el.dispatchStation.innerHTML = train.stops
     .map((s) => {
       const station = state.diagram.line.stations.find((st) => st.id === s.stationId);
-      return `<option value="${s.stationId}">${station ? station.name : s.stationId}</option>`;
+      return `<option value="${escapeHtml(s.stationId)}">${escapeHtml(station ? station.name : s.stationId)}</option>`;
     })
     .join('');
   if (!train.stops.some((s) => s.stationId === state.dispatchStationId)) {
@@ -762,7 +769,7 @@ function dispatchConflictsHtml(conflicts) {
       const a = trainById.get(c.trainAId);
       const b = trainById.get(c.trainBId);
       const track = c.trackLabel ? `${c.trackLabel}番線` : `番線${c.track}`;
-      return `<li>${station ? station.name : c.stationId} ${track}: 「${a ? a.number : c.trainAId}」と「${b ? b.number : c.trainBId}」の時刻が重なります（${formatTime(c.overlapStart)}〜${formatTime(c.overlapEnd)}）</li>`;
+      return `<li>${escapeHtml(station ? station.name : c.stationId)} ${escapeHtml(track)}: 「${escapeHtml(a ? a.number : c.trainAId)}」と「${escapeHtml(b ? b.number : c.trainBId)}」の時刻が重なります（${formatTime(c.overlapStart)}〜${formatTime(c.overlapEnd)}）</li>`;
     })
     .join('');
   return `<div class="dispatch-conflicts-warning">⚠ この調整で新たに${conflicts.length}件の番線競合が発生します<ul>${items}</ul></div>`;
@@ -796,14 +803,14 @@ function dispatchDutyWarningsHtml(brokenDuties, adjustedTrain) {
             .slice(0, 5)
             .map((c) => {
               const t = trainById.get(c.trainId);
-              const label = `${t ? t.number : c.trainId}（${formatTime(c.start)}→${formatTime(c.end)}）`;
+              const label = `${escapeHtml(t ? t.number : c.trainId)}（${formatTime(c.start)}→${formatTime(c.end)}）`;
               return `<button type="button" data-swap-duty-id="${d.id}" data-swap-segment-index="${segmentIndex}" data-swap-train-id="${c.trainId}">${label}に振り替え</button>`;
             })
             .join(' ');
           return `<div class="duty-swap-suggestion">区間${segmentIndex + 1}の振り替え候補: ${buttons}</div>`;
         })
         .join('');
-      return `<li>仕業「${d.name}」— ${reasons.join('／')}${suggestionHtml}</li>`;
+      return `<li>仕業「${escapeHtml(d.name)}」— ${reasons.join('／')}${suggestionHtml}</li>`;
     })
     .join('');
   return `<div class="dispatch-conflicts-warning">⚠ この調整で${brokenDuties.length}件の仕業に問題が発生します<ul>${items}</ul></div>`;
@@ -874,7 +881,7 @@ function dispatchTargetHtml(train) {
   const index = train.stops.findIndex((s) => s.stationId === state.dispatchStationId);
   const stationName = (i) => {
     const st = state.diagram.line.stations.find((x) => x.id === train.stops[i]?.stationId);
-    return st ? st.name : train.stops[i]?.stationId ?? '';
+    return escapeHtml(st ? st.name : train.stops[i]?.stationId ?? '');
   };
   const delta = state.dispatchDelta;
   const amount = `${delta >= 0 ? '+' : ''}${delta}秒`;
@@ -886,7 +893,7 @@ function dispatchTargetHtml(train) {
   const focusHint = state.dispatchFocus
     ? '<span class="dispatch-target-hint">フォーカス中 — 他の列車を選ぶには空白部分をクリックかEsc</span>'
     : '<span class="dispatch-target-hint">ダイヤグラムで列車の線をクリックするとフォーカスして区間・駅を選べます</span>';
-  return `<strong>${train.number}</strong>: ${what} ${status}<br>${focusHint}`;
+  return `<strong>${escapeHtml(train.number)}</strong>: ${what} ${status}<br>${focusHint}`;
 }
 
 // 現在のフォーム状態（列車・起点駅・ずらし方・秒数）で調整後の列車を作り直す。
@@ -1064,8 +1071,8 @@ function actualTableHtml() {
       };
       rows.push(`
         <tr>
-          <th>${train.number}</th>
-          <th>${station ? station.name : stop.stationId}</th>
+          <th>${escapeHtml(train.number)}</th>
+          <th>${escapeHtml(station ? station.name : stop.stationId)}</th>
           <td>${stop.arrival ?? ''}</td>
           <td>${inputHtml('arrival', actual.arrival, actual.manualArrival, stop.arrival)}</td>
           <td class="${deltaClass(arrDelta)}">${formatDelta(arrDelta)}</td>
@@ -1092,7 +1099,7 @@ function deltaClass(seconds) {
 function actualCompareNoteText() {
   if (state.actualCompareTarget !== 'dispatch') return '';
   if (!state.adjustedTrain) return '運転整理タブでダイヤを適用すると、その列車のみ整理後ダイヤと比較します（未適用の列車は計画のままです）。';
-  return `「${state.adjustedTrain.number}」のみ運転整理後のダイヤと比較しています（他の列車は計画のままです）。`;
+  return `「${escapeHtml(state.adjustedTrain.number)}」のみ運転整理後のダイヤと比較しています（他の列車は計画のままです）。`;
 }
 
 // 実績タブのダイヤグラム用オーバーレイ列車一覧（2026-08-01要望「実績も
@@ -1179,12 +1186,13 @@ el.actualAutoComplete.addEventListener('change', () => {
 // 編集中の1件、確定すると`state.duties`に追加/上書きされる）。
 
 function populateDutySegmentTrainSelect() {
-  el.dutySegmentTrain.innerHTML = state.diagram.trains.map((t) => `<option value="${t.id}">${t.number}</option>`).join('');
+  el.dutySegmentTrain.innerHTML = state.diagram.trains.map((t) => `<option value="${escapeHtml(t.id)}">${escapeHtml(t.number)}</option>`).join('');
   updateDutySegmentFromOptions();
 }
 
+// HTMLエスケープ済みの駅名を返す（呼び出し元はすべてinnerHTML用の文字列組み立て）。
 function stationName(stationId) {
-  return state.diagram.line.stations.find((s) => s.id === stationId)?.name ?? stationId;
+  return escapeHtml(state.diagram.line.stations.find((s) => s.id === stationId)?.name ?? stationId);
 }
 
 function updateDutySegmentFromOptions() {
@@ -1431,7 +1439,7 @@ function dutySegmentTableHtml() {
       const upBtn = `<button type="button" data-move-up-index="${i}" ${i === 0 ? 'disabled' : ''} title="上へ">↑</button>`;
       const downBtn = `<button type="button" data-move-down-index="${i}" ${i === last ? 'disabled' : ''} title="下へ">↓</button>`;
       const rowCls = i === state.dutyLastAddedSegmentIndex ? ' class="duty-segment-row--new"' : '';
-      return `<tr${rowCls}><td>${train ? train.number : s.trainId}</td><td>${stationName(s.fromStationId)} → ${stationName(s.toStationId)}</td><td>${timeText}</td><td>${upBtn}${downBtn} <button type="button" data-edit-index="${i}">編集</button> <button type="button" data-remove-index="${i}">削除</button></td></tr>`;
+      return `<tr${rowCls}><td>${escapeHtml(train ? train.number : s.trainId)}</td><td>${stationName(s.fromStationId)} → ${stationName(s.toStationId)}</td><td>${timeText}</td><td>${upBtn}${downBtn} <button type="button" data-edit-index="${i}">編集</button> <button type="button" data-remove-index="${i}">削除</button></td></tr>`;
     })
     .join('');
   return `${header}<tbody>${rows}</tbody>`;
@@ -1465,7 +1473,7 @@ function dutyListTableHtml() {
       const span = ranges.length
         ? `${formatTime(Math.min(...ranges.map((r) => r.start)))}〜${formatTime(Math.max(...ranges.map((r) => r.end)))}`
         : '—';
-      return `<tr><td>${duty.name}</td><td>${duty.segments.length}区間</td><td>${span}</td><td><button type="button" data-action="edit" data-duty-id="${duty.id}">編集</button> <button type="button" data-action="delete" data-duty-id="${duty.id}">削除</button></td></tr>`;
+      return `<tr><td>${escapeHtml(duty.name)}</td><td>${duty.segments.length}区間</td><td>${span}</td><td><button type="button" data-action="edit" data-duty-id="${duty.id}">編集</button> <button type="button" data-action="delete" data-duty-id="${duty.id}">削除</button></td></tr>`;
     })
     .join('');
   return `${header}<tbody>${rows}</tbody>`;
@@ -1500,7 +1508,7 @@ function dutySearchCandidatesHtml() {
   const buttons = candidates
     .map((c) => {
       const train = trainById.get(c.trainId);
-      return `<button type="button" data-candidate-train-id="${c.trainId}" data-candidate-stop-index="${c.stopIndex}">${train ? train.number : c.trainId}（${formatTime(c.time)}発）</button>`;
+      return `<button type="button" data-candidate-train-id="${c.trainId}" data-candidate-stop-index="${c.stopIndex}">${escapeHtml(train ? train.number : c.trainId)}（${formatTime(c.time)}発）</button>`;
     })
     .join(' ');
   return `<p class="panel-note">${stationName(last.toStationId)}から乗り継げる列車の候補（クリックで列車・乗車駅を選択、ダイヤグラムでもオレンジに光ります）: ${buttons}</p>`;
@@ -1537,7 +1545,7 @@ function dutyStepperHtml() {
   // 0=列車待ち、1=乗車駅待ち、2=降車駅待ち（列車・乗車駅は確定済み）
   const currentStep = !train ? 0 : picker.fromIndex == null ? 1 : 2;
   const steps = [
-    { label: '① 列車', value: train ? train.number : null, hint: 'ダイヤグラムで列車の線をクリック' },
+    { label: '① 列車', value: train ? escapeHtml(train.number) : null, hint: 'ダイヤグラムで列車の線をクリック' },
     {
       label: '② 乗車駅',
       value: train && picker.fromIndex != null ? stationName(train.stops[picker.fromIndex].stationId) : null,
@@ -1630,10 +1638,12 @@ function updateFileLabel() {
 // 持たないためリセットする。
 // `description` は.oudインポートなどcurrentFilePathを持たない取り込みで、
 // 「サンプルデータ」表示と区別するためのラベル（例:「碧洛電車.oud2 / 通常」）。
+// 形式が不正で読み込まなかった場合はfalseを返す（呼び出し元は続く
+// restoreOpsExtrasを、差し替わっていない元のダイヤに適用しないこと）。
 function loadDiagram(diagram, filePath, description) {
   if (!isValidDiagram(diagram)) {
     showToast('ダイヤファイルの形式が正しくありません（line.stations / trains が必要です）。', 'error');
-    return;
+    return false;
   }
   state.diagram = { line: diagram.line, trains: diagram.trains }; // dispatch/actualはrestoreOpsExtrasが別途扱う（state.diagramには含めない）
   state.currentFilePath = filePath || null;
@@ -1647,8 +1657,10 @@ function loadDiagram(diagram, filePath, description) {
   state.actualDate = todayDateString();
   state.actualCompareTarget = 'plan';
   state.duties = [];
-  state.dutyDraft = { id: null, name: '', segments: [] };
+  state.dutyDraft = { id: null, name: '', segments: [], minConnectionSeconds: null };
+  state.dutyPicker = null; // 前のダイヤの列車IDを指したまま残さない
   el.dutyName.value = '';
+  el.dutyBuffer.value = '';
 
   updateFileLabel();
   renderTabLazy('plan', renderPlanTab);
@@ -1657,6 +1669,7 @@ function loadDiagram(diagram, filePath, description) {
   renderActualTab();
   populateDutySegmentTrainSelect();
   renderTabLazy('duty', renderDutyTab);
+  return true;
 }
 
 // 運転整理・実績の保存形式（issue #3、確定）: 計画(line/trains)と同じ.tline
@@ -1735,7 +1748,7 @@ async function refreshRecentFiles() {
   const list = await window.tline.getRecentFiles();
   recentFilesByPath = new Map(list.map((e) => [e.path, e]));
   el.recentFilesSelect.innerHTML =
-    '<option value="">最近使ったファイル…</option>' + list.map((e) => `<option value="${e.path}">${e.name}</option>`).join('');
+    '<option value="">最近使ったファイル…</option>' + list.map((e) => `<option value="${escapeHtml(e.path)}">${escapeHtml(e.name)}</option>`).join('');
 }
 
 // 拡張子で.tline(自前JSON)か.oud/.oud2(OuDia/OuDiaSecond)かを判定。
@@ -1749,11 +1762,10 @@ function isOudPath(filePath, kind) {
 async function openTlineFile(filePath) {
   try {
     const { diagram } = await window.tline.openFile(filePath);
-    loadDiagram(diagram, filePath);
-    restoreOpsExtras(diagram);
+    if (loadDiagram(diagram, filePath)) restoreOpsExtras(diagram);
     await refreshRecentFiles();
   } catch (err) {
-    showToast(`ファイルを開けませんでした: ${err && err.message ? err.message : err}`, 'error');
+    showToast(`ファイルを開けませんでした: ${errorMessage(err)}`, 'error');
     await window.tline.removeRecentFile(filePath);
     await refreshRecentFiles();
   }
@@ -1770,16 +1782,45 @@ async function openOudFile(filePath) {
     }
     state.pendingOudImport = { filePath, lineName };
     el.oudImportLabel.textContent = `${basename(filePath)}（${lineName || '路線名なし'}）`;
-    el.oudDiaSelect.innerHTML = dias.map((d) => `<option value="${d.index}">${d.name}（${d.trainCount}本）</option>`).join('');
+    el.oudDiaSelect.innerHTML = dias.map((d) => `<option value="${d.index}">${escapeHtml(d.name)}（${d.trainCount}本）</option>`).join('');
     el.oudImportPanel.classList.remove('hidden');
   } catch (err) {
-    showToast(`OuDiaファイルを読み込めませんでした: ${err && err.message ? err.message : err}`, 'error');
+    showToast(`OuDiaファイルを読み込めませんでした: ${errorMessage(err)}`, 'error');
     await window.tline.removeRecentFile(filePath);
     await refreshRecentFiles();
   }
 }
 
-el.btnFileOpen.addEventListener('click', async () => {
+// 書き込み失敗（読み取り専用・同期中のロック等）は、以前は未処理のPromise
+// 拒否になり画面上は何も起きなかった——保存できたと誤解しないよう、成否を
+// どちらもトーストで知らせる。
+async function saveTo(filePath) {
+  try {
+    await window.tline.saveFile(filePath, buildSavePayload());
+  } catch (err) {
+    showToast(`保存できませんでした: ${errorMessage(err)}`, 'error');
+    return false;
+  }
+  showToast(`${basename(filePath)} に保存しました。`);
+  await refreshRecentFiles();
+  return true;
+}
+
+async function saveCurrentFile() {
+  if (!state.currentFilePath) return saveFileAs();
+  await saveTo(state.currentFilePath);
+}
+
+async function saveFileAs() {
+  const defaultName = state.currentFilePath ? basename(state.currentFilePath) : 'diagram.tline';
+  const filePath = await window.tline.chooseSavePath(defaultName);
+  if (!filePath) return;
+  if (!(await saveTo(filePath))) return;
+  state.currentFilePath = filePath;
+  updateFileLabel();
+}
+
+async function openFileFromDialog() {
   const filePath = await window.tline.chooseOpenPath();
   if (!filePath) return;
   if (isOudPath(filePath)) {
@@ -1787,22 +1828,26 @@ el.btnFileOpen.addEventListener('click', async () => {
   } else {
     await openTlineFile(filePath);
   }
-});
+}
 
-el.btnFileSave.addEventListener('click', async () => {
-  if (!state.currentFilePath) return;
-  await window.tline.saveFile(state.currentFilePath, buildSavePayload());
-  await refreshRecentFiles();
-});
+el.btnFileOpen.addEventListener('click', openFileFromDialog);
+el.btnFileSave.addEventListener('click', saveCurrentFile);
+el.btnFileSaveAs.addEventListener('click', saveFileAs);
 
-el.btnFileSaveAs.addEventListener('click', async () => {
-  const defaultName = state.currentFilePath ? basename(state.currentFilePath) : 'diagram.tline';
-  const filePath = await window.tline.chooseSavePath(defaultName);
-  if (!filePath) return;
-  await window.tline.saveFile(filePath, buildSavePayload());
-  state.currentFilePath = filePath;
-  updateFileLabel();
-  await refreshRecentFiles();
+// 一般的なデスクトップアプリと同じショートカット（ViUの「閉じる（Esc）」の
+// ように、ボタンのtitleにもキーを併記している）。Ctrl+Sは保存先が未確定
+// （サンプル・.oud取り込み直後）なら「名前を付けて保存」にフォールバックする。
+document.addEventListener('keydown', (e) => {
+  if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
+  const key = e.key.toLowerCase();
+  if (key === 's') {
+    e.preventDefault();
+    if (e.shiftKey) saveFileAs();
+    else saveCurrentFile();
+  } else if (key === 'o' && !e.shiftKey) {
+    e.preventDefault();
+    openFileFromDialog();
+  }
 });
 
 el.recentFilesSelect.addEventListener('change', async () => {
@@ -1838,7 +1883,7 @@ el.oudDiaConfirm.addEventListener('click', async () => {
   const diaIndex = Number(el.oudDiaSelect.value);
   try {
     const { diagram, stats } = await window.tline.importOud(state.pendingOudImport.filePath, diaIndex);
-    loadDiagram(diagram, null, `${basename(state.pendingOudImport.filePath)} / ${stats.diaName}`);
+    if (!loadDiagram(diagram, null, `${basename(state.pendingOudImport.filePath)} / ${stats.diaName}`)) return;
     hideOudImportPanel();
     await refreshRecentFiles();
     const notes = [];
@@ -1853,7 +1898,7 @@ el.oudDiaConfirm.addEventListener('click', async () => {
     }
     showToast(`「${stats.diaName}」から${stats.importedTrains}本の列車を取り込みました。${notes.length ? '（' + notes.join('、') + '）' : ''}`);
   } catch (err) {
-    showToast(`ダイヤを取り込めませんでした: ${err && err.message ? err.message : err}`, 'error');
+    showToast(`ダイヤを取り込めませんでした: ${errorMessage(err)}`, 'error');
   }
 });
 

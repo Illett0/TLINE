@@ -8,6 +8,9 @@
   --color-accent: #4fa3ff;
   --color-accent-text: #0c0f14;
   --color-warn: #e3a12c;
+  /* ホバー時の背景。白の半透明はライト/クラシックの白背景では見えないため
+     テーマごとに切り替える。 */
+  --color-hover: rgba(255, 255, 255, 0.06);
   --duty-band-opacity: 0.6; /* 暗い背景では0.45だとくすむ */
   --color-duty-saved: #b48cff; /* 登録済みの仕業の帯（仕業タブ）— 編集中のamber・候補のemerald・accentの青と被らない紫 */
   --radius-sm: 4px;
@@ -29,6 +32,7 @@
   --color-border: #c9ccd3;
   --color-accent: #2166c4;
   --color-warn: #b5720a;
+  --color-hover: rgba(0, 0, 0, 0.06);
   --color-duty-saved: #7c3aed;
   --duty-band-opacity: 0.4;
 }
@@ -48,6 +52,7 @@
   --color-accent: #1a56b0;
   --color-accent-text: #ffffff;
   --color-warn: #c0392b;
+  --color-hover: rgba(0, 0, 0, 0.08);
   --color-duty-saved: #7b3fa0;
   --duty-band-opacity: 0.4;
   --radius-sm: 0;
@@ -79,6 +84,11 @@ body {
   position: sticky;
   top: 0;
   z-index: 10;
+  /* 幅の狭いウィンドウではファイルツールバーを2段目に折り返す（ViUの
+     ヘッダーと同じ方式）。折り返さないと右端のボタン・セレクトが画面外に
+     はみ出して押せなくなっていた。 */
+  flex-wrap: wrap;
+  row-gap: 8px;
 }
 #app-header h1 { font-size: 16px; margin: 0; letter-spacing: 0.05em; }
 
@@ -86,10 +96,25 @@ body {
 
 #file-toolbar {
   display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  row-gap: 6px;
   align-items: center;
   gap: 10px;
   margin-left: auto;
   font-size: 12px;
+}
+#file-toolbar button, #file-toolbar select { white-space: nowrap; }
+
+/* キーボード操作時のフォーカス位置を明示する（ViUと同じくマウス操作時には
+   出ない:focus-visibleを使う）。ボタン・セレクト・入力欄の既定のフォーカス
+   枠は暗い背景でほぼ見えなかった。 */
+button:focus-visible,
+select:focus-visible,
+input:focus-visible,
+summary:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
 }
 #current-file-label { color: var(--color-text-dim); max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #file-toolbar button,
@@ -103,7 +128,7 @@ body {
   font-size: 12px;
 }
 #file-toolbar button:disabled { color: var(--color-text-dim); cursor: not-allowed; opacity: 0.5; }
-#file-toolbar button:not(:disabled):hover { background: rgba(255, 255, 255, 0.06); }
+#file-toolbar button:not(:disabled):hover { background: var(--color-hover); }
 .hidden { display: none !important; }
 
 #oud-import-panel {
@@ -205,7 +230,7 @@ body {
   cursor: pointer;
   font-size: 13px;
 }
-.tab-button:hover { background: rgba(255, 255, 255, 0.06); }
+.tab-button:hover { background: var(--color-hover); }
 .tab-button.active { background: var(--color-accent); color: var(--color-accent-text); font-weight: 600; }
 
 main { padding: 20px; }
@@ -582,6 +607,11 @@ main { padding: 20px; }
 }
 .diagram-zoom-control input[type="range"] { width: 140px; }
 .diagram-zoom-control label { display: flex; align-items: center; gap: 4px; margin-left: 12px; cursor: pointer; }
+/* 狭いウィンドウで「縦 − 100% ＋」やトグル名が途中で改行されて崩れていた
+   ため、各項目は1塊のまま、項目単位で折り返す。説明文だけは縮んでよい。 */
+.diagram-zoom-control { flex-wrap: wrap; row-gap: 6px; }
+.diagram-zoom-vertical, .diagram-zoom-control label { white-space: nowrap; }
+.diagram-zoom-hint { flex: 1 1 240px; }
 
 /* タイムテーブル（issue #8「見やすくして」、OuDiaSecondの時刻表グリッドを
    参考にした改善、2026-07-14）: 列車数・駅数が多いと表が縦横どちらにも
@@ -610,7 +640,7 @@ main { padding: 20px; }
   cursor: pointer;
   font-size: 12px;
 }
-.timetable-direction-button:hover { background: rgba(255, 255, 255, 0.06); }
+.timetable-direction-button:hover { background: var(--color-hover); }
 .timetable-direction-button.active { background: var(--color-accent); color: var(--color-accent-text); font-weight: 600; border-color: var(--color-accent); }
 .stop-table {
   border-collapse: collapse;
@@ -755,4 +785,11 @@ main { padding: 20px; }
   background: transparent;
   color: var(--color-text-dim);
   border: 1px solid var(--color-border);
+}
+
+/* OSで「視差効果を減らす」が有効な場合はフラッシュ・スピナーの動きを止める
+   （ViUと同じ配慮）。スピナーは表示自体は残し、回転だけを止める。 */
+@media (prefers-reduced-motion: reduce) {
+  .duty-segment-row--new { animation: none; }
+  .diagram-loading-spinner { animation: none; }
 }

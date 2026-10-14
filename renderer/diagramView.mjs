@@ -10,6 +10,14 @@
 
 import { parseTime } from './timeUtils.mjs';
 
+// 駅名・列車番号・仕業名などファイル由来／ユーザー入力の文字列をHTML/SVG
+// 文字列に埋め込む前に通す。「<」を含む名前でSVG全体の解析が崩れたり、
+// 「&」が文字参照として解釈されて表示が化けたりするのを防ぐ。
+// renderer/app.mjsのテーブル・セレクト生成でも共用する。
+export function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+}
+
 // Exported so renderer/app.mjs's wheel-zoom handler (see setupDiagramPanZoom)
 // can convert a screen/scroll x-coordinate to the same content-space x the
 // SVG itself uses (timeToX below always starts at MARGIN.left, not 0) when
@@ -108,7 +116,8 @@ function stopPickerSvg(train, points, selectedIndex) {
     .map((p) => {
       const isSelected = selectedIndex != null && p.index === selectedIndex;
       const cls = `diagram-stop-picker${isSelected ? ' diagram-stop-picker--selected' : ''}`;
-      const title = isSelected ? `${p.station.name}（乗車駅として選択済み）— 続けて降車駅をクリック` : `${p.station.name}をクリックして選択`;
+      const name = escapeHtml(p.station.name);
+      const title = isSelected ? `${name}（乗車駅として選択済み）— 続けて降車駅をクリック` : `${name}をクリックして選択`;
       const r = isSelected ? 10 : 8;
       const mark = isSelected
         ? `<text x="${p.x}" y="${p.y + 4}" text-anchor="middle" class="diagram-stop-picker-mark" pointer-events="none">✓</text>`
@@ -161,7 +170,8 @@ function dispatchPickerSvg(train, stations, selected, maxDistanceKm, plotHeight,
   drawable.forEach((p, k) => {
     if (prev && !isBranchSeam(prev.station, p.station) && Math.abs(prev.y - p.y) > 0.5) {
       const cls = `diagram-dispatch-run${isSel(p.index, 'arrival') ? ' diagram-dispatch-run--selected' : ''}`;
-      const title = `${prev.station.name}→${p.station.name}間の走行で遅れる（${p.station.name}着から後ろをずらす）`;
+      const [from, to] = [escapeHtml(prev.station.name), escapeHtml(p.station.name)];
+      const title = `${from}→${to}間の走行で遅れる（${to}着から後ろをずらす）`;
       runs.push(
         `<line x1="${prev.lastX}" y1="${prev.y}" x2="${p.firstX}" y2="${p.y}" class="${cls}" data-train-id="${train.id}" data-stop-index="${p.index}" data-dispatch-edge="arrival"><title>${title}</title></line>`
       );
@@ -170,7 +180,8 @@ function dispatchPickerSvg(train, stations, selected, maxDistanceKm, plotHeight,
     if (p.hasDeparture && !isLast && p.stop.stopType !== 'pass') {
       const selectedHere = isSel(p.index, 'departure');
       const cls = `diagram-dispatch-dwell${selectedHere ? ' diagram-dispatch-dwell--selected' : ''}`;
-      const title = k === 0 ? `${p.station.name}の発車を遅らせる（${p.station.name}発から後ろをずらす）` : `${p.station.name}での停車を延ばす（${p.station.name}発から後ろをずらす）`;
+      const name = escapeHtml(p.station.name);
+      const title = k === 0 ? `${name}の発車を遅らせる（${name}発から後ろをずらす）` : `${name}での停車を延ばす（${name}発から後ろをずらす）`;
       handles.push(
         `<circle cx="${p.lastX}" cy="${p.y}" r="${selectedHere ? 9 : 7}" class="${cls}" data-train-id="${train.id}" data-stop-index="${p.index}" data-dispatch-edge="departure"><title>${title}</title></circle>`
       );
@@ -219,7 +230,7 @@ function dutyBandsSvg(bands, trainById, stations, focusTrainId, maxDistanceKm, p
       const [a, c] = [points[points.length - 2], points[points.length - 1]];
       const x = (a[0] + c[0]) / 2 + 9;
       const y = (a[1] + c[1]) / 2 + 4;
-      parts.push(`<text x="${x}" y="${y}" class="diagram-duty-band-label${keep}">${band.label}</text>`);
+      parts.push(`<text x="${x}" y="${y}" class="diagram-duty-band-label${keep}">${escapeHtml(band.label)}</text>`);
     }
   }
   return parts.join('');
@@ -352,9 +363,9 @@ function depotMarkerSvg([x, y], kind, color, depotWork, linkedTime) {
 // pair at the turnback arc's apex instead (see turnbackNumberSvg).
 function operationLabelSvg([x, y], text, color, side) {
   if (side === 'left') {
-    return `<text x="${x - 9}" y="${y + 3}" text-anchor="end" class="diagram-operation-label" style="fill:${color};">${text}</text>`;
+    return `<text x="${x - 9}" y="${y + 3}" text-anchor="end" class="diagram-operation-label" style="fill:${color};">${escapeHtml(text)}</text>`;
   }
-  return `<text x="${x + 9}" y="${y + 3}" class="diagram-operation-label" style="fill:${color};">${text}</text>`;
+  return `<text x="${x + 9}" y="${y + 3}" class="diagram-operation-label" style="fill:${color};">${escapeHtml(text)}</text>`;
 }
 
 // 折り返しのつなぎ: the connection between two trains inferOperationChains
@@ -514,7 +525,7 @@ function throughConnectorSvg(geo, fromColor, fromDash, toColor, toDash, unverifi
 // 折り返し運番と同じ役割だが、弧の頂点ではなくS字カーブの中点のすぐ上に
 // 置く（頂点=stationの外側という概念がこちらにはないため）。
 function throughNumberSvg(geo, text, color) {
-  return `<text x="${geo.mid[0]}" y="${geo.mid[1] - 8}" text-anchor="middle" class="diagram-operation-label" style="fill:${color};">${text}</text>`;
+  return `<text x="${geo.mid[0]}" y="${geo.mid[1] - 8}" text-anchor="middle" class="diagram-operation-label" style="fill:${color};">${escapeHtml(text)}</text>`;
 }
 
 // 折り返し運番: drawn ONCE per matched pair, horizontally centered on the
@@ -525,7 +536,7 @@ function throughNumberSvg(geo, text, color) {
 // offset from each other.
 function turnbackNumberSvg(geo, text, color) {
   const y = geo.sign < 0 ? geo.apexY - 4 : geo.apexY + 13;
-  return `<text x="${geo.mx}" y="${y}" text-anchor="middle" class="diagram-operation-label" style="fill:${color};">${text}</text>`;
+  return `<text x="${geo.mx}" y="${y}" text-anchor="middle" class="diagram-operation-label" style="fill:${color};">${escapeHtml(text)}</text>`;
 }
 
 // The train's own number ("2110A" etc.), drawn ALONG its own line — rotated
@@ -556,7 +567,7 @@ function trainNumberLabelSvg(segments, text, color) {
   const mx = (ax + bx) / 2;
   const my = (ay + by) / 2;
   const angle = Math.round(Math.atan2(by - ay, bx - ax) * (180 / Math.PI) * 10) / 10;
-  return `<text transform="translate(${mx} ${my}) rotate(${angle})" dy="-3" text-anchor="middle" class="diagram-train-number-label" style="fill:${color};">${text}</text>`;
+  return `<text transform="translate(${mx} ${my}) rotate(${angle})" dy="-3" text-anchor="middle" class="diagram-train-number-label" style="fill:${color};">${escapeHtml(text)}</text>`;
 }
 
 // Builds the little colored-line swatch + label row shown above the
@@ -595,7 +606,7 @@ function legendHtml(trains, resolveColor) {
       return (
         `<span class="diagram-legend-item">` +
         `<svg width="20" height="10" class="diagram-legend-swatch"><line x1="0" y1="5" x2="20" y2="5" stroke="${color}" stroke-width="2"${dash} /></svg>` +
-        `<span>${label}</span>` +
+        `<span>${escapeHtml(label)}</span>` +
         `</span>`
       );
     })
@@ -701,7 +712,7 @@ export function renderDiagram(
     const gridLineClass = isBranchSeam ? 'diagram-grid-line diagram-grid-line--branch-seam' : 'diagram-grid-line';
     const label = isBranchSeam ? `${station.name}（支線）` : station.name;
     svgParts.push(`<line x1="${MARGIN.left}" y1="${y}" x2="${MARGIN.left + plotWidth}" y2="${y}" class="${gridLineClass}" />`);
-    svgParts.push(`<text x="${MARGIN.left - 8}" y="${y + 4}" class="diagram-station-label" text-anchor="end">${label}</text>`);
+    svgParts.push(`<text x="${MARGIN.left - 8}" y="${y + 4}" class="diagram-station-label" text-anchor="end">${escapeHtml(label)}</text>`);
   }
 
   // Classic theme only: 10-minute minor gridlines between each hour line,
