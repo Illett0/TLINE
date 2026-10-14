@@ -20,3 +20,11 @@
 ## リリース手順
 
 `dev`→`main`のマージ・タグ付け・GitHub Release作成の手順は`NOTES.md`「リリース時の手順」参照（`--no-ff`マージが必須）。
+
+## 作業環境（PC 2台）
+
+- ノートPCとデスクトップの2台で作業する。リポジトリはどちらも`C:\dev\TLINE`（OneDriveの外。node_modulesを同期させないため、2026-10-15に移した）。
+- `NOTES.md`・`Diagram/`・`.tmp-screenshots/`（gitignore対象）の実体はOneDriveの`Claude\_dev-local\TLINE\`にあり、ここからリンクしている。2台で同じ`NOTES.md`を編集することになるので、両方で同時に書き換えない（OneDriveが競合コピーを作る）。リンクは`.git/info/exclude`でgitから外してある。
+- PCを切り替えるときは、終えるPCでcommitとpush、始めるPCで`git pull`。未pushの作業はもう一方に届かない。
+- 作り直しや新しいPCでは、OneDriveの`Claude\_dev-local\setup-dev.ps1`を実行する（clone、リンク、`npm ci`、`npm run setup`、Electron本体の取得、起動確認まで）。
+- 2台のClaude Codeのやり取りは`Claude\_dev-local\HANDOFF.md`（連絡帳）。
